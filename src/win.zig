@@ -1,5 +1,6 @@
 //const win = @import("win32api.zig");
 const win = @cImport(@cInclude("windows.h"));
+const helpers = @import("helpers.zig");
 
 const std = @import("std");
 const uni = std.unicode;
@@ -58,7 +59,7 @@ fn render_gradient(x_offset: u8, y_offset: u8) void {
             //TODO: Probably need to figure out something here
             // to convert from hex value to this representation
             // padding, red,green,blue
-            const pixel: usize = @intCast(y * width_current + x);
+            const pixel: u32 = @intCast(y * width_current + x);
 
             const blue: u32 = @intCast(@mod(
                 x + @as(i32, @intCast(x + x_offset)),
@@ -217,6 +218,7 @@ pub fn Create() void {
         .lpszMenuName = null,
         .lpszClassName = lpsz_class_name,
     };
+
     // hInstance is usually passed in by callback in
     // but if you don't have it, you can get it with
     // GetModuleHandle. Its takes in something related to exe
@@ -241,6 +243,16 @@ pub fn Create() void {
         null, // lpParam
     );
     if (window_handle != null) {
+        var frequency_processor: win.LARGE_INTEGER = undefined;
+        var count_previous: win.LARGE_INTEGER = undefined;
+        // the frequency is fixed at system boot
+        _ = win.QueryPerformanceFrequency(&frequency_processor);
+        _ = win.QueryPerformanceFrequency(&count_previous);
+
+        //const frequency: i64 = frequency_processor.QuadPart;
+
+        //var cycle_count_previous: u64 = helpers.rdtsc();
+
         while (running) {
             var message: win.MSG = undefined;
             while (win.PeekMessageW(&message, 0, 0, 0, win.PM_REMOVE) > 0) {
@@ -268,6 +280,21 @@ pub fn Create() void {
             _ = win.TextOutW(device_context, 100, 100, uni.utf8ToUtf16LeStringLiteral("Hellow").ptr, 6);
 
             _ = win.ReleaseDC(window_handle, device_context);
+
+            // var count_current: win.LARGE_INTEGER = undefined;
+            // const cycle_count_current: u64 = helpers.rdtsc();
+            // const elapsed_cycles = cycle_count_current - cycle_count_previous;
+            // const elapsed_cycles_million: u64 = elapsed_cycles / (1000 * 1000);
+            //
+            // _ = win.QueryPerformanceCounter(&count_current);
+            // const elapsed_counter: i64 = (count_current.QuadPart - count_previous.QuadPart);
+            // const elapsed_time_milliseconds: i64 = @divTrunc(elapsed_counter * 1000, frequency);
+            // const frame_time_milliseconds: i64 = @divTrunc(frequency, elapsed_counter);
+            //
+            // //std.debug.print("{d}ms per frame / {d}FPS - {d}M/frame \n", .{ elapsed_time_milliseconds, frame_time_milliseconds, elapsed_cycles_million });
+            //
+            // count_previous = count_current;
+            // cycle_count_previous = cycle_count_current;
         }
     }
 }
@@ -279,7 +306,7 @@ pub fn read_file(buffer: *[FILE_SIZE_MAX]u8, is_html: bool) u32 {
     if (is_html) {
         file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/melbjs_html.html"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
     } else {
-        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/test.css"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
+        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/melbjs_css.css"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
     }
     defer _ = win.CloseHandle(file);
 
