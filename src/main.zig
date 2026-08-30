@@ -1,12 +1,12 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const win = @import("win.zig");
 
+const FILE_SIZE_BYTES_MAXIMUM = 5 * 1024;
 const ELEMENTS_MAXIMUM_NUMBER = 128;
-const ATTRIBUTES_MAXIMUM_NUMBER = 256;
+const ATTRIBUTES_MAXIMUM_NUMBER = 16;
 const TEXT_LENGTH_MAXIMUM_BYTES = 8192;
 const CSS_STYLE_RULES_MAXIMUM_NUMBER = 64;
-
-const FILE_SIZE_BYTES_MAXIMUM = 5 * 1024;
 
 const Tag = enum(u8) {
     dead,
@@ -36,18 +36,59 @@ const Position = struct {
     y: u16 = 0,
 };
 
-const Attributes = struct {
-    position: Position = .{},
-    background_color: u32,
-    text_color: u32,
-    margin: u16,
-    padding: u16,
-    width: u16,
-    height: u16,
+const Specificity = enum(u2) { id, class, tag };
+
+const AttributeKey = enum(u8) {
+    text_color,
+    background_color,
+    position,
+    width,
+    height,
+    margin,
+    padding,
+    font_size,
+    font_weight,
+    border_radius,
+    display,
+    font_family,
+    text_decoration,
+    align_items,
+    null,
+};
+
+const Attribute = struct {
+    key: AttributeKey,
+    value: String,
+    specificity: Specificity,
+};
+
+const AttributesList = struct {
+    attributes: [ATTRIBUTES_MAXIMUM_NUMBER]Attribute = undefined,
+    size_attributes: u8 = 0,
+
+    fn add_attribute(self: *AttributesList, attribute: Attribute) void {
+        if (self.size_attributes >= ATTRIBUTES_MAXIMUM_NUMBER) {
+            return;
+        }
+        for (self.attributes[0..self.size_attributes]) |*item| {
+            if ((item.key == attribute.key)) {
+                // if the current specificity is higher or same (id is lowest), then update current item
+                // else return
+                if (@intFromEnum(item.specificity) >= @intFromEnum(attribute.specificity)) {
+                    item.* = attribute;
+                }
+                return;
+            }
+        }
+
+        self.attributes[self.size_attributes] = attribute;
+        std.debug.print("Adding attribute: {s}\n", .{@tagName(attribute.key)});
+        self.size_attributes += 1;
+    }
 };
 
 const Node = struct {
-    attributes: Attributes = undefined,
+    attributes: AttributesList = undefined,
     id: String = .{},
     class: String = .{},
     text: String = .{},
@@ -63,6 +104,47 @@ const Dom = struct {
 };
 
 var dom_nodes: Dom = .{};
+var html_parser: HTMlParser = .{};
+var css_parser: CSSParser = .{};
+
+const static_string_map_tag = std.StaticStringMap(Tag).initComptime(.{
+    .{ "html", .html },
+    .{ "h1", .h1 },
+    .{ "body", .body },
+    .{ "div", .div },
+    .{ "p", .p },
+    .{ "em", .em },
+    .{ "b", .b },
+    .{ "a", .a },
+    .{ "title", .title },
+    .{ "span", .span },
+    .{ "button", .button },
+    .{ "br", .br },
+    .{ "hr", .hr },
+});
+
+const static_string_map_attribute_key = std.StaticStringMap(AttributeKey).initComptime(.{
+    .{ "color", .text_color },
+    .{ "background-color", .background_color },
+    .{ "position", .position },
+    .{ "width", .width },
+    .{ "height", .height },
+    .{ "margin", .margin },
+    .{ "padding", .padding },
+    .{ "font-size", .font_size },
+    .{ "font-weight", .font_weight },
+    .{ "display", .display },
+    .{ "border-radius", .border_radius },
+    .{ "font-family", .font_family },
+    .{ "text-decoration", .text_decoration },
+    .{ "align-items", .align_items },
+});
+
+pub fn print_text_value(content: *[FILE_SIZE_BYTES_MAXIMUM]u8, string: String) void {
+    const start = string.start;
+    const end = start + string.length;
+    std.debug.print("\n The string value is: {s}\n", .{content[start..end]});
+}
 
 const HTMlParser = struct {
     content: [FILE_SIZE_BYTES_MAXIMUM]u8 = undefined,
@@ -74,11 +156,11 @@ const HTMlParser = struct {
     node_number: u8 = 0,
     child_number: u8 = 0,
 
-    pub fn eof(self: *const HTMlParser) bool {
+    pub fn eof(self: *HTMlParser) bool {
         return self.current_position >= self.length_content;
     }
 
-    pub fn read_next_char(self: *const HTMlParser) ?u8 {
+    pub fn read_next_char(self: *HTMlParser) ?u8 {
         if (self.current_position + 1 >= self.length_content) {
             return null;
         }
@@ -87,7 +169,7 @@ const HTMlParser = struct {
     }
 
     pub fn starts_with_char(
-        self: *const HTMlParser,
+        self: *HTMlParser,
         character: u8,
     ) bool {
         if (self.eof()) {
@@ -106,20 +188,6 @@ const HTMlParser = struct {
         }
 
         self.current_position += 1;
-    }
-
-    pub fn consume_character(self: *HTMlParser, char: u8) ?u8 {
-        if (self.eof()) {
-            return null;
-        }
-
-        const character = self.content[self.current_position];
-        if (character == char) {
-            self.current_position += 1;
-            return;
-        }
-
-        return character;
     }
 
     pub fn parse_name(self: *HTMlParser) String {
@@ -158,15 +226,14 @@ const HTMlParser = struct {
             }
         }
 
-        //self.print_current_character();
         const start = self.current_position;
         var length: u16 = 0;
 
         while (!self.eof()) {
             const character = self.content[self.current_position];
 
-            // Text ends when we encounter '<'
-            if (character == '<') {
+            // Text ends when we encounter '<' or "
+            if (character == '<' or character == '"') {
                 break;
             }
 
@@ -180,69 +247,52 @@ const HTMlParser = struct {
         };
     }
 
-    pub fn return_tag(
-        self: *const HTMlParser,
-        name: String,
-    ) Tag {
-        const start: u16 = name.start;
-        const end: u16 = @as(u16, name.start) + @as(u16, name.length);
-
-        const tag_name = self.content[start..end];
-
-        if (std.mem.eql(u8, tag_name, "html")) {
-            return .html;
-        }
-
-        if (std.mem.eql(u8, tag_name, "body")) {
-            return .body;
-        }
-
-        if (std.mem.eql(u8, tag_name, "div")) {
-            return .div;
-        }
-        if (std.mem.eql(u8, tag_name, "h1")) {
-            return .h1;
-        }
-        if (std.mem.eql(u8, tag_name, "em")) {
-            return .em;
-        }
-
-        if (std.mem.eql(u8, tag_name, "br")) {
-            return .br;
-        }
-
-        if (std.mem.eql(u8, tag_name, "hr")) {
-            return .hr;
-        }
-
-        if (std.mem.eql(u8, tag_name, "title")) {
-            return .title;
-        }
-
-        if (std.mem.eql(u8, tag_name, "p")) {
-            return .p;
-        }
-        if (std.mem.eql(u8, tag_name, "a")) {
-            return .a;
-        }
-
-        if (std.mem.eql(u8, tag_name, "b")) {
-            return .b;
-        }
-
-        if (std.mem.eql(u8, tag_name, "span")) {
-            return .span;
-        }
-
-        if (std.mem.eql(u8, tag_name, "button")) {
-            return .button;
-        }
-
-        return .dead;
+    pub fn print_current_character(self: *HTMlParser) void {
+        std.debug.print("Current character:{c}\n", .{self.content[self.current_position]});
     }
 
-    pub fn print_current_character(self: *HTMlParser) void {
-        std.debug.print("Current character:{d}\n", .{self.content[self.current_position]});
+    pub fn parse_id(self: *HTMlParser) void {
+        // read id
+        // read =
+        // read ' or "
+        // read the value
+        // read ' or "
+        const id = self.content[self.current_position..(self.current_position + 3)];
+        std.debug.print("\nId value: {s} \n", .{id});
+        if (!std.mem.eql(u8, "id=", id)) {
+            return;
+        }
+
+        self.current_position += 3;
+        self.print_current_character();
+        self.expect_character('"');
+        self.print_current_character();
+        const id_value = self.parse_text();
+        print_text_value(&self.content, id_value);
+        dom_nodes.nodes[dom_nodes.nodes_size - 1].id = id_value;
+        self.print_current_character();
+        self.expect_character('"');
+    }
+
+    pub fn parse_class_name(self: *HTMlParser) void {
+        // read class
+        // read =
+        // read ' or "
+        // read the value
+        // read ' or "
+        const class = self.content[self.current_position..(self.current_position + 6)];
+        std.debug.print("\nClass string: {s} \n", .{class});
+        if (!std.mem.eql(u8, "class=", class)) {
+            return;
+        }
+
+        self.current_position += 6;
+        self.expect_character('"');
+        self.print_current_character();
+        const class_value = self.parse_text();
+        print_text_value(&self.content, class_value);
+        dom_nodes.nodes[dom_nodes.nodes_size - 1].class = class_value;
+        self.expect_character('"');
     }
 
     pub fn parse_element(self: *HTMlParser) void {
@@ -265,9 +315,12 @@ const HTMlParser = struct {
             return;
         }
 
-        const tag_name = self.parse_name();
+        const tag_name_string = self.parse_name();
+        const tag_name = self.content[tag_name_string.start..(tag_name_string.start + tag_name_string.length)];
 
-        node.tag = self.return_tag(tag_name);
+        node.tag = static_string_map_tag.get(tag_name) orelse .dead;
+
+        //node.tag = return_tag(tag_name, self.content[0..]);
         if (node.tag != .dead) {
             node.id_parent = self.child_number;
             node.id_node = self.node_number;
@@ -281,6 +334,14 @@ const HTMlParser = struct {
 
         // For now, skip everything until '>'.
         while (!self.eof()) {
+            if (self.starts_with_char('i')) {
+                self.parse_id();
+            }
+
+            if (self.starts_with_char('c')) {
+                self.parse_class_name();
+            }
+
             if (self.starts_with_char('>')) {
                 break;
             }
@@ -336,58 +397,231 @@ const HTMlParser = struct {
     }
 };
 
-pub fn draw_fancy_node_structure(parser: *HTMlParser) void {
-    std.debug.print("==================Fancy Node Structure===============\n", .{});
-    var number: u8 = 0;
-    while (number < dom_nodes.nodes_size) {
-        const node = dom_nodes.nodes[number];
-
-        number += 1;
-
-        var i: u8 = 0;
-        while (i < node.id_parent) {
-            std.debug.print(" |", .{});
-            i += 1;
-        }
-        const start = node.text.start;
-        const end = start + node.text.length;
-        if (node.tag == .text) {
-            std.debug.print("-  \"{s}\" ", .{parser.*.content[start..end]});
-        } else {
-            std.debug.print("-{s}", .{
-                @tagName(node.tag),
-            });
-        }
-        std.debug.print("\n", .{});
-    }
-}
+const CSSSelector = struct {
+    selector: String,
+    specificity: Specificity = .tag,
+};
 
 // assume unit is px
 // colors will be in hex
 const CSSParser = struct {
     // make a attributes struct for each element
     // and the copy it to every node that has that element
-    var attributes: Attributes = .{};
+    content: [FILE_SIZE_BYTES_MAXIMUM]u8 = undefined,
+    attributes: [ELEMENTS_MAXIMUM_NUMBER]AttributesList = undefined,
 
-    fn parse_css() void {
-        attributes.position = .{ 0, 0 };
-        attributes.background_color = 0;
-        attributes.text_color = 0;
-        attributes.margin = 0;
-        attributes.padding = 0;
-        attributes.width = 0;
-        attributes.height = 0;
+    length_content: u32 = 0,
+
+    current_position: u16 = 0,
+
+    pub fn print_current_character(self: *CSSParser) void {
+        std.debug.print("Current character:{d}\n", .{self.content[self.current_position]});
+    }
+
+    fn eof(self: *CSSParser) bool {
+        return self.current_position >= self.length_content;
+    }
+
+    fn consume_whitespace(self: *CSSParser) void {
+        while (!self.eof()) {
+            if (self.content[self.current_position] != ' ') {
+                self.current_position += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    pub fn expect_character(
+        self: *CSSParser,
+        character: u8,
+    ) void {
+        if (!self.starts_with_char(character)) {
+            //std.debug.print("Character: {c}", .{character});
+            unreachable;
+        }
+
+        self.current_position += 1;
+    }
+
+    pub fn parse_selector(self: *CSSParser) CSSSelector {
+        var start = self.current_position;
+        var length: u16 = 0;
+
+        var selector: CSSSelector = undefined;
+
+        const character_first: u8 =
+            self.content[self.current_position];
+        switch (character_first) {
+            // class
+            '.' => {
+                selector.specificity = .class;
+                self.current_position += 1;
+                start = start + 1;
+            },
+            // id
+            '#' => {
+                selector.specificity = .id;
+                self.current_position += 1;
+                start = start + 1;
+            },
+            // tag
+            else => {
+                selector.specificity = .tag;
+            },
+        }
+        while (true) {
+            const character = self.content[self.current_position];
+            if (!std.ascii.isAlphanumeric(character)) {
+                break;
+            }
+            self.current_position += 1;
+            length += 1;
+        }
+        selector.selector.start = start;
+        selector.selector.length = length;
+
+        return selector;
+    }
+
+    pub fn starts_with_char(
+        self: *CSSParser,
+        character: u8,
+    ) bool {
+        if (self.eof()) {
+            return false;
+        }
+
+        return self.content[self.current_position] == character;
+    }
+
+    pub fn parse_attribute_key(self: *CSSParser) String {
+        const start = self.current_position;
+        var length: u16 = 0;
+
+        while (!self.eof()) {
+            const character =
+                self.content[self.current_position];
+
+            // background-color
+            if (character == ':') {
+                break;
+            }
+
+            self.current_position += 1;
+            length += 1;
+        }
+
+        return String{
+            .start = start,
+            .length = length,
+        };
+    }
+
+    pub fn parse_attribute_value(self: *CSSParser) String {
+        const start = self.current_position;
+        var length: u16 = 0;
+
+        while (!self.eof()) {
+            const character =
+                self.content[self.current_position];
+
+            if (character == ';') {
+                break;
+            }
+
+            self.current_position += 1;
+            length += 1;
+        }
+
+        return String{
+            .start = start,
+            .length = length,
+        };
+    }
+
+    fn parse(self: *CSSParser) void {
+        // 5 attributes
+        //var attributes: Attributes = .{};
+        // parse selector
+        // parse declaration
+
+        while (!self.eof()) {
+            // parse tag
+            const selector: CSSSelector = self.parse_selector();
+            self.expect_character('{');
+            while (!self.starts_with_char('}')) {
+                const key_string: String = self.parse_attribute_key();
+                const key_name = self.content[key_string.start..(key_string.start + key_string.length)];
+
+                const key: AttributeKey = static_string_map_attribute_key.get(key_name) orelse .null;
+                self.expect_character(':');
+                const value = self.parse_attribute_value();
+                self.expect_character(';');
+
+                const selector_start = selector.selector.start;
+                const selector_end = selector.selector.start + selector.selector.length;
+
+                const value_start = value.start;
+                const value_end = value.start + value.length;
+
+                const attribute: Attribute = .{
+                    .key = key,
+                    .value = value,
+                    .specificity = selector.specificity,
+                };
+
+                switch (attribute.specificity) {
+                    .tag => {
+                        // find all the nodes with that tag
+                        //
+                        var index: u8 = 0;
+                        while (index < dom_nodes.nodes_size) : (index += 1) {
+                            if (dom_nodes.nodes[index].tag == static_string_map_tag.get(self.content[selector_start..selector_end])) {
+                                dom_nodes.nodes[index].attributes.add_attribute(attribute);
+                            }
+                        }
+                    },
+                    .class => {
+                        var index: u8 = 0;
+                        while (index < dom_nodes.nodes_size) : (index += 1) {
+                            const start = dom_nodes.nodes[index].class.start;
+                            const end = start + dom_nodes.nodes[index].class.length;
+                            const className = html_parser.content[start..end];
+
+                            if (std.mem.eql(u8, className, self.content[selector_start..selector_end])) {
+                                dom_nodes.nodes[index].attributes.add_attribute(attribute);
+                            }
+                        }
+                    },
+                    .id => {
+                        var index: u8 = 0;
+                        while (index < dom_nodes.nodes_size) : (index += 1) {
+                            const start = dom_nodes.nodes[index].id.start;
+                            const end = start + dom_nodes.nodes[index].id.length;
+                            const id = html_parser.content[start..end];
+
+                            if (std.mem.eql(u8, id, self.content[selector_start..selector_end])) {
+                                dom_nodes.nodes[index].attributes.add_attribute(attribute);
+                            }
+                        }
+                    },
+                }
+
+                std.debug.print("Selector: {s} | Attribute: {s} | Value:{s} | Specificity:{s}\n", .{
+                    self.content[selector_start..selector_end],
+                    @tagName(key),
+                    self.content[value_start..value_end],
+                    @tagName(selector.specificity),
+                });
+            }
+            self.expect_character('}');
+        }
     }
 };
 
-pub fn main() anyerror!void {
-    var html_parser: HTMlParser = .{};
-
-    html_parser.length_content = win.read_file(&html_parser.content, true);
-
+pub fn debug_print() void {
     std.debug.print("==============HTML Content============\n{s}\n", .{html_parser.content[0..html_parser.length_content]});
-
-    html_parser.parse();
 
     std.debug.print("The nodes are:\n", .{});
 
@@ -398,16 +632,81 @@ pub fn main() anyerror!void {
         const start: usize = node.text.start;
         const end: usize = start + node.text.length;
 
-        std.debug.print("Node {d}: tag={s}, id={d}, text={s}, node_number={d}, child_number={d}\n", .{
+        std.debug.print("Node {d}: tag={s}, id={d}, class={d} text={s}, node_number={d}, child_number={d}\n", .{
             i,
             @tagName(node.tag),
             node.id.length,
+            node.class.length,
             html_parser.content[start..end],
             node.id_node,
             node.id_parent,
         });
+        std.debug.print("===Attributes===\n", .{});
+        var j: u8 = 0;
+        const attributes = node.attributes.attributes;
+        while (j < node.attributes.size_attributes) : (j += 1) {
+            const attribute_value_start = attributes[j].value.start;
+            const attribute_value_end = attributes[j].value.start + attributes[j].value.length;
+            std.debug.print("Key: {s} | Value: {s} | Specificity: {s}\n", .{ @tagName(attributes[j].key), css_parser.content[attribute_value_start..attribute_value_end], @tagName(
+                attributes[j].specificity,
+            ) });
+        }
+        std.debug.print("\n", .{});
+    }
+    std.debug.print("==================Fancy Node Structure===============\n", .{});
+    var index: u8 = 0;
+    while (index < dom_nodes.nodes_size) : (index += 1) {
+        const node = dom_nodes.nodes[index];
+
+        i = 0;
+        while (i < node.id_parent) : (i += 1) {
+            std.debug.print(" |", .{});
+        }
+        const start = node.text.start;
+        const end = start + node.text.length;
+        if (node.tag == .text) {
+            std.debug.print("-  \"{s}\" ", .{html_parser.content[start..end]});
+        } else {
+            std.debug.print("-{s}", .{
+                @tagName(node.tag),
+            });
+        }
+        std.debug.print("\n", .{});
     }
 
-    draw_fancy_node_structure(&html_parser);
+    //draw_fancy_node_structure(&html_parser);
+
+    std.debug.print("==============CSS Content============\n{s}\n", .{css_parser.content[0..css_parser.length_content]});
+}
+
+pub fn main() anyerror!void {
+    html_parser.length_content = win.read_file(&html_parser.content, true);
+
+    // remove carriage return or line feed
+    if (html_parser.length_content >= 2 and
+        html_parser.content[html_parser.length_content - 2] == '\r' and
+        html_parser.content[html_parser.length_content - 1] == '\n')
+    {
+        html_parser.length_content -= 2;
+    }
+
+    css_parser.length_content = win.read_file(&css_parser.content, false);
+
+    // remove  carriage return or line feed
+    if (css_parser.length_content >= 2 and
+        css_parser.content[css_parser.length_content - 2] == '\r' and
+        css_parser.content[css_parser.length_content - 1] == '\n')
+    {
+        css_parser.length_content -= 2;
+    }
+
+    html_parser.parse();
+    css_parser.parse();
+
+    // Only do the debug print stuff if in debug mode
+    if (builtin.mode == .Debug) {
+        debug_print();
+    }
+
     win.Create();
 }
