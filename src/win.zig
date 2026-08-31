@@ -314,9 +314,9 @@ const FILE_SIZE_MAX = 5 * 1024;
 pub fn read_file(buffer: *[FILE_SIZE_MAX]u8, is_html: bool) u32 {
     var file: win.HANDLE = undefined;
     if (is_html) {
-        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/melbjs_html.html"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
+        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/test.html"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
     } else {
-        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/melbjs_css.css"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
+        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/test.css"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
     }
     defer _ = win.CloseHandle(file);
 

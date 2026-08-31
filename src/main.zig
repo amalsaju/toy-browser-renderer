@@ -671,18 +671,32 @@ const CSSParser = struct {
 pub fn calculate_width(index: usize) void {
     // 0 would be the html tag
     if (index > 0) {
-        var total = 0;
+        var total: i32 = 0;
         for (dom_nodes.nodes[index].attributes.attributes) |item| {
             switch (item.key) {
                 .border, .margin, .padding => {
-                    total += item.value;
+                    // assuming every value for the above attributes has a px attached
+                    if (item.value.start <= 0) continue;
+                    const start = item.value.start;
+                    const end = start + item.value.length - 2;
+                    const value = std.fmt.parseInt(i32, css_parser.content[start..end], 10) catch 0;
+                    // multiply by 2 for either side
+                    total += value * 2;
+                },
+                .width => {
+                    // assuming every value for the above attributes has a px attached
+                    if (item.value.start <= 0) continue;
+                    const start = item.value.start;
+                    const end = start + item.value.length - 2;
+                    const value = std.fmt.parseInt(i32, css_parser.content[start..end], 10) catch 0;
+                    // don't multiply
+                    total += value;
                 },
                 else => {},
             }
         }
-        const parent_width = dom_nodes.nodes[dom_nodes.nodes[index].id_parent - 1].rect.width;
 
-        dom_nodes.nodes[index].rect.width = parent_width - (2 * total);
+        dom_nodes.nodes[index].rect.width = total;
     } else {
         dom_nodes.nodes[index].rect.width = win.WIDTH_MAX;
     }
@@ -790,7 +804,7 @@ pub fn main() anyerror!void {
     html_parser.parse();
     css_parser.parse();
 
-    //calculate_layout();
+    calculate_layout();
 
     // Only do the debug print stuff if in debug mode
     if (builtin.mode == .Debug) {
