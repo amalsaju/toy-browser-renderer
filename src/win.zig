@@ -8,8 +8,8 @@ const uni = std.unicode;
 const WIDTH_MIN = 640;
 const HEIGHT_MIN = 360;
 
-const WIDTH_MAX = 1920;
-const HEIGHT_MAX = 1080;
+pub const WIDTH_MAX = 1920;
+pub const HEIGHT_MAX = 1080;
 const BYTES_PER_PIXEL = 4;
 
 // I think windows make it signed int
@@ -111,7 +111,7 @@ fn resize_dib_section(width: i32, height: i32) void {
     //const bitmap_memory_bytes: u8 = (width_current * height_current) * 4;
 
     //const pitch: u8 = BYTES_PER_PIXEL * width;
-    render_box(0, 0, WIDTH_MAX, HEIGHT_MAX, rgb_value{ .r = 0, .g = 0, .b = 0 });
+    render_box(0, 0, WIDTH_MAX, HEIGHT_MAX, rgb_value{ .r = 255, .g = 255, .b = 255 });
 }
 
 fn update_window(device_context: win.HDC, window_rect: win.RECT, x: i32, y: i32) void {
@@ -274,13 +274,23 @@ pub fn Create() void {
             update_window(device_context, client_rect, 0, 0);
 
             //render_gradient(x_offset, 0);
-            render_box(100, 100, 300, 500, rgb_value{ .r = 0, .g = 255, .b = 0 });
-            render_box(200, 200, 500, 50, rgb_value{ .r = 100, .g = 100, .b = 100 });
+            //render_box(100, 100, 300, 500, rgb_value{ .r = 0, .g = 255, .b = 0 });
+            //render_box(200, 200, 500, 50, rgb_value{ .r = 100, .g = 100, .b = 100 });
 
             _ = win.TextOutW(device_context, 100, 100, uni.utf8ToUtf16LeStringLiteral("Hellow").ptr, 6);
 
-            _ = win.ReleaseDC(window_handle, device_context);
+            const hFont1: win.HFONT = win.CreateFontW(48, 0, 0, 0, win.FW_NORMAL, win.FALSE, win.TRUE, win.FALSE, win.DEFAULT_CHARSET, win.OUT_OUTLINE_PRECIS, win.CLIP_DEFAULT_PRECIS, win.CLEARTYPE_QUALITY, win.VARIABLE_PITCH, win.TEXT(std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI")));
+            _ = win.SelectObject(device_context, hFont1);
+            var rect: win.RECT = undefined;
 
+            //Sets the coordinates for the rectangle in which the text is to be formatted.
+            _ = win.SetRect(&rect, 100, 100, 700, 200);
+            _ = win.SetTextColor(device_context, win.RGB(255, 0, 0));
+            _ = win.DrawTextW(device_context, win.TEXT(uni.utf8ToUtf16LeStringLiteral("Drawing Text with Impact")), -1, &rect, win.DT_NOCLIP);
+
+            _ = win.DeleteObject(hFont1);
+
+            _ = win.ReleaseDC(window_handle, device_context);
             // var count_current: win.LARGE_INTEGER = undefined;
             // const cycle_count_current: u64 = helpers.rdtsc();
             // const elapsed_cycles = cycle_count_current - cycle_count_previous;

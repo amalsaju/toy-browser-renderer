@@ -38,6 +38,41 @@ const Position = struct {
 
 const Specificity = enum(u2) { id, class, tag };
 
+const ParentStack = struct {
+    arr: [ELEMENTS_MAXIMUM_NUMBER]*Node = undefined,
+    array_size: u7 = 0,
+
+    pub fn eof(self: *ParentStack) bool {
+        if (self.array_size >= ELEMENTS_MAXIMUM_NUMBER - 1) {
+            return true;
+        }
+        return false;
+    }
+
+    pub fn push(self: *ParentStack, node: *Node) void {
+        self.arr[self.array_size] = node;
+        if (!self.eof()) {
+            self.array_size += 1;
+        } else {
+            unreachable;
+        }
+    }
+    pub fn pop(self: *ParentStack) void {
+        if (self.array_size > 0) {
+            self.array_size -= 1;
+        } else {
+            unreachable;
+        }
+    }
+    pub fn peek(self: *ParentStack) *Node {
+        if (self.array_size > 0) {
+            return self.arr[self.array_size - 1];
+        } else {
+            unreachable;
+        }
+    }
+};
+
 const AttributeKey = enum(u8) {
     text_color,
     background_color,
@@ -48,6 +83,7 @@ const AttributeKey = enum(u8) {
     padding,
     font_size,
     font_weight,
+    border,
     border_radius,
     display,
     font_family,
@@ -87,15 +123,23 @@ const AttributesList = struct {
     }
 };
 
+const LayoutRect = struct {
+    x: i32 = 0,
+    y: i32 = 0,
+    width: i32 = 0,
+    height: i32 = 0,
+};
+
 const Node = struct {
     attributes: AttributesList = undefined,
     id: String = .{},
     class: String = .{},
     text: String = .{},
     tag: Tag = .dead,
+    rect: LayoutRect = .{},
 
     id_parent: u8 = 0,
-    id_node: u8 = 0,
+    id_node: u8 = 1,
 };
 
 const Dom = struct {
@@ -104,6 +148,7 @@ const Dom = struct {
 };
 
 var dom_nodes: Dom = .{};
+var parent_struct: ParentStack = .{};
 var html_parser: HTMlParser = .{};
 var css_parser: CSSParser = .{};
 
@@ -131,6 +176,7 @@ const static_string_map_attribute_key = std.StaticStringMap(AttributeKey).initCo
     .{ "height", .height },
     .{ "margin", .margin },
     .{ "padding", .padding },
+    .{ "border", .border },
     .{ "font-size", .font_size },
     .{ "font-weight", .font_weight },
     .{ "display", .display },
@@ -153,7 +199,7 @@ const HTMlParser = struct {
 
     current_position: u16 = 0,
 
-    node_number: u8 = 0,
+    node_number: u8 = 1,
     child_number: u8 = 0,
 
     pub fn eof(self: *HTMlParser) bool {
@@ -307,10 +353,8 @@ const HTMlParser = struct {
                 }
                 self.current_position += 1;
             }
-            // I think the last one would overflow
-            if (self.child_number > 0) {
-                self.child_number -= 1;
-            }
+
+            parent_struct.pop();
 
             return;
         }
@@ -320,15 +364,18 @@ const HTMlParser = struct {
 
         node.tag = static_string_map_tag.get(tag_name) orelse .dead;
 
-        //node.tag = return_tag(tag_name, self.content[0..]);
         if (node.tag != .dead) {
-            node.id_parent = self.child_number;
             node.id_node = self.node_number;
 
-            self.child_number += 1;
+            if (parent_struct.array_size > 0) {
+                node.id_parent = parent_struct.peek().*.id_node;
+            } else {
+                node.id_parent = 0;
+            }
             self.node_number += 1;
 
             dom_nodes.nodes[dom_nodes.nodes_size] = node;
+            parent_struct.push(&dom_nodes.nodes[dom_nodes.nodes_size]);
             dom_nodes.nodes_size += 1;
         }
 
@@ -360,9 +407,7 @@ const HTMlParser = struct {
 
         // handle cases for br and hr they don't have a closing tag
         if (node.tag == .br or node.tag == .hr) {
-            if (self.child_number > 0) {
-                self.child_number -= 1;
-            }
+            parent_struct.pop();
         }
     }
 
@@ -381,7 +426,7 @@ const HTMlParser = struct {
                 var node: Node = .{};
                 node.tag = .text;
                 node.text = text;
-                node.id_parent = self.child_number;
+                node.id_parent = parent_struct.peek().*.id_node;
                 node.id_node = self.node_number;
 
                 dom_nodes.nodes[dom_nodes.nodes_size] = node;
@@ -589,6 +634,9 @@ const CSSParser = struct {
                             const end = start + dom_nodes.nodes[index].class.length;
                             const className = html_parser.content[start..end];
 
+                            std.debug.print("ClassName: {s}", .{className});
+                            print_text_value(&self.content, selector.selector);
+
                             if (std.mem.eql(u8, className, self.content[selector_start..selector_end])) {
                                 dom_nodes.nodes[index].attributes.add_attribute(attribute);
                             }
@@ -620,63 +668,102 @@ const CSSParser = struct {
     }
 };
 
+pub fn calculate_width(index: usize) void {
+    // 0 would be the html tag
+    if (index > 0) {
+        var total = 0;
+        for (dom_nodes.nodes[index].attributes.attributes) |item| {
+            switch (item.key) {
+                .border, .margin, .padding => {
+                    total += item.value;
+                },
+                else => {},
+            }
+        }
+        const parent_width = dom_nodes.nodes[dom_nodes.nodes[index].id_parent - 1].rect.width;
+
+        dom_nodes.nodes[index].rect.width = parent_width - (2 * total);
+    } else {
+        dom_nodes.nodes[index].rect.width = win.WIDTH_MAX;
+    }
+}
+
+pub fn calculate_layout() void {
+    // calculate width of everything
+    // full size - (the margins + border + parent padding)
+    //
+    for (dom_nodes.nodes, 0..) |_, i| {
+        calculate_width(i);
+    }
+}
+
 pub fn debug_print() void {
-    std.debug.print("==============HTML Content============\n{s}\n", .{html_parser.content[0..html_parser.length_content]});
-
-    std.debug.print("The nodes are:\n", .{});
-
-    var i: u8 = 0;
+    var i: usize = 0;
 
     while (i < dom_nodes.nodes_size) : (i += 1) {
         const node = dom_nodes.nodes[i];
-        const start: usize = node.text.start;
-        const end: usize = start + node.text.length;
 
-        std.debug.print("Node {d}: tag={s}, id={d}, class={d} text={s}, node_number={d}, child_number={d}\n", .{
-            i,
-            @tagName(node.tag),
-            node.id.length,
-            node.class.length,
-            html_parser.content[start..end],
-            node.id_node,
-            node.id_parent,
+        std.debug.print("\n================ Node {d} ================\n", .{i});
+
+        // Basic node information
+        std.debug.print("tag:       {s}\n", .{@tagName(node.tag)});
+        std.debug.print("id_node:   {d}\n", .{node.id_node});
+        std.debug.print("id_parent: {d}\n", .{node.id_parent});
+
+        // ID
+        const id_start = node.id.start;
+        const id_end = id_start + node.id.length;
+        std.debug.print("id:        \"{s}\"\n", .{
+            html_parser.content[id_start..id_end],
         });
-        std.debug.print("===Attributes===\n", .{});
-        var j: u8 = 0;
-        const attributes = node.attributes.attributes;
+
+        // Class
+        const class_start = node.class.start;
+        const class_end = class_start + node.class.length;
+        std.debug.print("class:     \"{s}\"\n", .{
+            html_parser.content[class_start..class_end],
+        });
+
+        // Text
+        const text_start = node.text.start;
+        const text_end = text_start + node.text.length;
+        std.debug.print("text:      \"{s}\"\n", .{
+            html_parser.content[text_start..text_end],
+        });
+
+        // Layout rectangle
+        std.debug.print(
+            "rect:      x={d}, y={d}, width={d}, height={d}\n",
+            .{
+                node.rect.x,
+                node.rect.y,
+                node.rect.width,
+                node.rect.height,
+            },
+        );
+
+        // Attributes
+        std.debug.print("attributes ({d}):\n", .{
+            node.attributes.size_attributes,
+        });
+
+        var j: usize = 0;
         while (j < node.attributes.size_attributes) : (j += 1) {
-            const attribute_value_start = attributes[j].value.start;
-            const attribute_value_end = attributes[j].value.start + attributes[j].value.length;
-            std.debug.print("Key: {s} | Value: {s} | Specificity: {s}\n", .{ @tagName(attributes[j].key), css_parser.content[attribute_value_start..attribute_value_end], @tagName(
-                attributes[j].specificity,
-            ) });
+            const attribute = node.attributes.attributes[j];
+
+            const value_start = attribute.value.start;
+            const value_end = value_start + attribute.value.length;
+
+            std.debug.print(
+                "  {s}: \"{s}\" ({s})\n",
+                .{
+                    @tagName(attribute.key),
+                    css_parser.content[value_start..value_end],
+                    @tagName(attribute.specificity),
+                },
+            );
         }
-        std.debug.print("\n", .{});
     }
-    std.debug.print("==================Fancy Node Structure===============\n", .{});
-    var index: u8 = 0;
-    while (index < dom_nodes.nodes_size) : (index += 1) {
-        const node = dom_nodes.nodes[index];
-
-        i = 0;
-        while (i < node.id_parent) : (i += 1) {
-            std.debug.print(" |", .{});
-        }
-        const start = node.text.start;
-        const end = start + node.text.length;
-        if (node.tag == .text) {
-            std.debug.print("-  \"{s}\" ", .{html_parser.content[start..end]});
-        } else {
-            std.debug.print("-{s}", .{
-                @tagName(node.tag),
-            });
-        }
-        std.debug.print("\n", .{});
-    }
-
-    //draw_fancy_node_structure(&html_parser);
-
-    std.debug.print("==============CSS Content============\n{s}\n", .{css_parser.content[0..css_parser.length_content]});
 }
 
 pub fn main() anyerror!void {
@@ -702,6 +789,8 @@ pub fn main() anyerror!void {
 
     html_parser.parse();
     css_parser.parse();
+
+    //calculate_layout();
 
     // Only do the debug print stuff if in debug mode
     if (builtin.mode == .Debug) {
