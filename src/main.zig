@@ -83,7 +83,7 @@ const AttributeKey = enum(u8) {
     padding,
     font_size,
     font_weight,
-    border,
+    border_width,
     border_radius,
     display,
     font_family,
@@ -139,7 +139,14 @@ const Node = struct {
     rect: LayoutRect = .{},
 
     id_parent: u8 = 0,
-    id_node: u8 = 1,
+    id_node: u8 = 0,
+
+    pub fn return_attributes(self: *Node, key: AttributeKey) ?Attribute {
+        for (self.attributes.attributes) |attribute| {
+            if (attribute.key == key) return attribute;
+        }
+        return null;
+    }
 };
 
 const Dom = struct {
@@ -176,7 +183,7 @@ const static_string_map_attribute_key = std.StaticStringMap(AttributeKey).initCo
     .{ "height", .height },
     .{ "margin", .margin },
     .{ "padding", .padding },
-    .{ "border", .border },
+    .{ "border-width", .border_width },
     .{ "font-size", .font_size },
     .{ "font-weight", .font_weight },
     .{ "display", .display },
@@ -199,7 +206,7 @@ const HTMlParser = struct {
 
     current_position: u16 = 0,
 
-    node_number: u8 = 1,
+    node_number: u8 = 0,
     child_number: u8 = 0,
 
     pub fn eof(self: *HTMlParser) bool {
@@ -453,7 +460,7 @@ const CSSParser = struct {
     // make a attributes struct for each element
     // and the copy it to every node that has that element
     content: [FILE_SIZE_BYTES_MAXIMUM]u8 = undefined,
-    attributes: [ELEMENTS_MAXIMUM_NUMBER]AttributesList = undefined,
+    //attributes: [ELEMENTS_MAXIMUM_NUMBER]AttributesList = undefined,
 
     length_content: u32 = 0,
 
@@ -674,7 +681,7 @@ pub fn calculate_width(index: usize) void {
         var total: i32 = 0;
         for (dom_nodes.nodes[index].attributes.attributes) |item| {
             switch (item.key) {
-                .border, .margin, .padding => {
+                .border_width, .margin, .padding => {
                     // assuming every value for the above attributes has a px attached
                     if (item.value.start <= 0) continue;
                     const start = item.value.start;
@@ -696,18 +703,49 @@ pub fn calculate_width(index: usize) void {
             }
         }
 
-        dom_nodes.nodes[index].rect.width = total;
+        dom_nodes.nodes[index].rect.width = dom_nodes.nodes[dom_nodes.nodes[index].id_parent].rect.width - total;
     } else {
         dom_nodes.nodes[index].rect.width = win.WIDTH_MAX;
     }
 }
 
+pub fn return_css_int_value(index: u8, key: AttributeKey) i32 {
+    const attribute = dom_nodes.nodes[index].return_attributes(key) orelse return 0;
+    const attribute_value: i32 = std.fmt.parseInt(
+        i32,
+        // -2 to remove the "px"
+        css_parser.content[attribute.value.start..(attribute.value.start + attribute.value.length - 2)],
+        10,
+    ) catch 0;
+
+    return attribute_value;
+}
+
+pub fn calculate_position_x(index: u8) void {
+    // here x, y are boxes not included in the padding
+    const margin = return_css_int_value(index, AttributeKey.margin);
+    const padding = return_css_int_value(index, AttributeKey.padding);
+    const border_width = return_css_int_value(index, AttributeKey.border_width);
+
+    if (index > 0) {
+        // take parents x,y as well
+        const parent_position_x = dom_nodes.nodes[dom_nodes.nodes[index].id_parent].rect.x;
+        dom_nodes.nodes[index].rect.x = border_width + margin + padding + parent_position_x;
+    } else {
+        // for html node there is no parent container
+        dom_nodes.nodes[index].rect.x = border_width + margin + padding;
+    }
+}
+
 pub fn calculate_layout() void {
     // calculate width of everything
-    // full size - (the margins + border + parent padding)
+    // full size - (the margins + border_width + parent padding)
     //
-    for (dom_nodes.nodes, 0..) |_, i| {
+
+    var i: u8 = 0;
+    while (i < dom_nodes.nodes_size) : (i += 1) {
         calculate_width(i);
+        calculate_position_x(i);
     }
 }
 
