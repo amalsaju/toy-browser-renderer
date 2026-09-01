@@ -92,9 +92,23 @@ const AttributeKey = enum(u8) {
     null,
 };
 
+const EdgeSizes = struct {
+    left: i32 = 0,
+    right: i32 = 0,
+    top: i32 = 0,
+    bottom: i32 = 0,
+};
+
+const CssValue = union(enum) {
+    edge_value: EdgeSizes,
+    string_value: String,
+    color_value: win.rgb_value,
+    integer_value: i32,
+};
+
 const Attribute = struct {
-    key: AttributeKey,
-    value: String,
+    key: AttributeKey = .null,
+    value: CssValue,
     specificity: Specificity,
 };
 
@@ -121,6 +135,15 @@ const AttributesList = struct {
         std.debug.print("Adding attribute: {s}\n", .{@tagName(attribute.key)});
         self.size_attributes += 1;
     }
+
+    fn return_attribute(self: *AttributesList, key: AttributeKey) ?*Attribute {
+        for (self.attributes[0..]) |*attribute| {
+            if (attribute.key == key) {
+                return attribute;
+            }
+        }
+        return null;
+    }
 };
 
 const LayoutRect = struct {
@@ -140,13 +163,6 @@ const Node = struct {
 
     id_parent: u8 = 0,
     id_node: u8 = 0,
-
-    pub fn return_attributes(self: *Node, key: AttributeKey) ?Attribute {
-        for (self.attributes.attributes) |attribute| {
-            if (attribute.key == key) return attribute;
-        }
-        return null;
-    }
 };
 
 const Dom = struct {
@@ -608,14 +624,60 @@ const CSSParser = struct {
 
                 const key: AttributeKey = static_string_map_attribute_key.get(key_name) orelse .null;
                 self.expect_character(':');
-                const value = self.parse_attribute_value();
+                const value_string = self.parse_attribute_value();
                 self.expect_character(';');
 
                 const selector_start = selector.selector.start;
                 const selector_end = selector.selector.start + selector.selector.length;
 
-                const value_start = value.start;
-                const value_end = value.start + value.length;
+                const value_start = value_string.start;
+                const value_end = value_string.start + value_string.length;
+
+                var value: CssValue = undefined;
+                switch (key) {
+                    .margin, .border_width, .padding => {
+                        const integer_value: i32 = std.fmt.parseInt(
+                            i32,
+                            // -2 to remove the "px"
+                            css_parser.content[value_start..(value_end - 2)],
+                            10,
+                        ) catch 0;
+
+                        // value is edgevalue with 4 side values
+                        value = .{
+                            .edge_value = EdgeSizes{
+                                .left = integer_value,
+                                .bottom = integer_value,
+                                .right = integer_value,
+                                .top = integer_value,
+                            },
+                        };
+                    },
+                    .text_color, .background_color => {
+                        // value is a rgb struct
+                        // start from 1 because 0 is #
+                        const color = std.fmt.parseInt(u32, css_parser.content[(value_start + 1)..], 16) catch 0;
+                        const r: u8 = @truncate((color >> 16) & 0xFF);
+                        const g: u8 = @truncate((color >> 8) & 0xFF);
+                        const b: u8 = @truncate(color & 0xFF);
+                        value = .{
+                            .color_value = win.rgb_value{ .r = r, .g = g, .b = b },
+                        };
+                    },
+                    .width, .height => {
+                        const integer_value: i32 = std.fmt.parseInt(
+                            i32,
+                            // -2 to remove the "px"
+                            css_parser.content[value_start..(value_end - 2)],
+                            10,
+                        ) catch 0;
+                        value = .{ .integer_value = integer_value };
+                    },
+                    else => {
+                        // all strings here for now
+                        value = .{ .string_value = value_string };
+                    },
+                }
 
                 const attribute: Attribute = .{
                     .key = key,
@@ -676,41 +738,59 @@ const CSSParser = struct {
 };
 
 pub fn calculate_width(index: usize) void {
-    // 0 would be the html tag
-    if (index > 0) {
-        var total: i32 = 0;
-        for (dom_nodes.nodes[index].attributes.attributes) |item| {
-            switch (item.key) {
-                .border_width, .margin, .padding => {
-                    // assuming every value for the above attributes has a px attached
-                    if (item.value.start <= 0) continue;
-                    const start = item.value.start;
-                    const end = start + item.value.length - 2;
-                    const value = std.fmt.parseInt(i32, css_parser.content[start..end], 10) catch 0;
-                    // multiply by 2 for either side
-                    total += value * 2;
-                },
-                .width => {
-                    // assuming every value for the above attributes has a px attached
-                    if (item.value.start <= 0) continue;
-                    const start = item.value.start;
-                    const end = start + item.value.length - 2;
-                    const value = std.fmt.parseInt(i32, css_parser.content[start..end], 10) catch 0;
-                    // don't multiply
-                    total += value;
-                },
-                else => {},
-            }
-        }
 
-        dom_nodes.nodes[index].rect.width = dom_nodes.nodes[dom_nodes.nodes[index].id_parent].rect.width - total;
-    } else {
-        dom_nodes.nodes[index].rect.width = win.WIDTH_MAX;
+    // total will be the min space required by the element
+    var margin_left = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.left else 0;
+    var margin_right = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.margin).?.*.value.edge_value.right;
+
+    const padding_left = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.padding).?.*.value.edge_value.left;
+    const padding_right = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.padding).?.*.value.edge_value.right;
+
+    const border_width_left = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.border_width).?.*.value.edge_value.left;
+    const border_width_right = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.border_width).?.*.value.edge_value.right;
+
+    var width = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.width).?.*.value.integer_value;
+
+    const total = margin_left + margin_right + padding_left + padding_right + border_width_left + border_width_right + width;
+
+    const underflow = dom_nodes.nodes[dom_nodes.nodes[index].id_parent].rect.width - total;
+
+    // we are gonna assume 0 value means auto which means it can expand or contract
+    // need to match 5 cases
+    // width == auto, margin_left == auto, margin_right == auto (auto will be 0 for our case)
+    // false, false, false
+    // false, false, true
+    // false, true, false
+    // true , _, _ => if width is auto, any other auto values become 0
+    // false, true, true
+
+    if (width > 0 and margin_left > 0 and margin_right > 0) {
+        margin_right += underflow;
+    } else if (width > 0 and margin_left > 0 and margin_right == 0) {
+        margin_right = underflow;
+    } else if (width > 0 and margin_left == 0 and margin_right > 0) {
+        margin_left = underflow;
+    } else if (width == 0) {
+        if (underflow >= 0) {
+            width = underflow;
+        } else {
+            width = 0;
+            margin_right += underflow;
+        }
+    } else if (width > 0 and margin_left == 0 and margin_right == 0) {
+        margin_left = @divFloor(underflow, 2);
+        margin_right = @divFloor(underflow, 2);
     }
+
+    // create a dimensions struct on the node and update these values in that
+    // don't update the actual html and css values back
+    dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.margin).?.*.value.edge_value.left = margin_left;
+    dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.margin).?.*.value.edge_value.right = margin_right;
+    dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.width).?.*.value.integer_value = width;
 }
 
 pub fn return_css_int_value(index: u8, key: AttributeKey) i32 {
-    const attribute = dom_nodes.nodes[index].return_attributes(key) orelse return 0;
+    const attribute = dom_nodes.nodes[index].attributes.return_attributes(key) orelse return 0;
     const attribute_value: i32 = std.fmt.parseInt(
         i32,
         // -2 to remove the "px"
@@ -721,21 +801,7 @@ pub fn return_css_int_value(index: u8, key: AttributeKey) i32 {
     return attribute_value;
 }
 
-pub fn calculate_position_x(index: u8) void {
-    // here x, y are boxes not included in the padding
-    const margin = return_css_int_value(index, AttributeKey.margin);
-    const padding = return_css_int_value(index, AttributeKey.padding);
-    const border_width = return_css_int_value(index, AttributeKey.border_width);
-
-    if (index > 0) {
-        // take parents x,y as well
-        const parent_position_x = dom_nodes.nodes[dom_nodes.nodes[index].id_parent].rect.x;
-        dom_nodes.nodes[index].rect.x = border_width + margin + padding + parent_position_x;
-    } else {
-        // for html node there is no parent container
-        dom_nodes.nodes[index].rect.x = border_width + margin + padding;
-    }
-}
+// pub fn calculate_position_x(index: u8) void {}
 
 pub fn calculate_layout() void {
     // calculate width of everything
@@ -745,7 +811,7 @@ pub fn calculate_layout() void {
     var i: u8 = 0;
     while (i < dom_nodes.nodes_size) : (i += 1) {
         calculate_width(i);
-        calculate_position_x(i);
+        // calculate_position_x(i);
     }
 }
 
@@ -803,8 +869,8 @@ pub fn debug_print() void {
         while (j < node.attributes.size_attributes) : (j += 1) {
             const attribute = node.attributes.attributes[j];
 
-            const value_start = attribute.value.start;
-            const value_end = value_start + attribute.value.length;
+            const value_start = attribute.value.string_value.start;
+            const value_end = value_start + attribute.value.string_value.length;
 
             std.debug.print(
                 "  {s}: \"{s}\" ({s})\n",

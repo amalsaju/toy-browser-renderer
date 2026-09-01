@@ -21,15 +21,15 @@ var bitmap_info: win.BITMAPINFO = undefined;
 var bitmap_memory: [HEIGHT_MAX * WIDTH_MAX]u32 = undefined;
 var running: bool = true;
 
-const rgb_value = struct {
+pub const rgb_value = struct {
     // a is not used
     // just trying to make it 32 bit
     // I think its better for alignment ?
     // not sure
-    a: u8 = undefined,
-    r: u8,
-    g: u8,
-    b: u8,
+    a: u8 = 0,
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
 };
 
 fn render_box(x: i32, y: i32, width: i32, height: i32, rgb: rgb_value) void {
