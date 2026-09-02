@@ -1,6 +1,7 @@
 //const win = @import("win32api.zig");
 const win = @cImport(@cInclude("windows.h"));
 const helpers = @import("helpers.zig");
+const main = @import("main.zig");
 
 const std = @import("std");
 const uni = std.unicode;
@@ -15,11 +16,11 @@ const BYTES_PER_PIXEL = 4;
 // I think windows make it signed int
 // so that they can rotate the images
 // check stretchdibits
-var width_current: i32 = 0;
-var height_current: i32 = 0;
+pub var width_current: i32 = 0;
+pub var height_current: i32 = 0;
 var bitmap_info: win.BITMAPINFO = undefined;
 var bitmap_memory: [HEIGHT_MAX * WIDTH_MAX]u32 = undefined;
-var running: bool = true;
+pub var running: bool = true;
 
 pub const rgb_value = struct {
     // a is not used
@@ -102,6 +103,9 @@ fn resize_dib_section(width: i32, height: i32) void {
 
     width_current = width;
     height_current = height;
+
+    // update the layout
+    main.calculate_layout();
 
     // we've already set the max amount of data the bitmap memory can hold which is 720p
     // So here we can play around with any resolution upto 720p
@@ -276,20 +280,19 @@ pub fn Create() void {
             //render_gradient(x_offset, 0);
             //render_box(100, 100, 300, 500, rgb_value{ .r = 0, .g = 255, .b = 0 });
             //render_box(200, 200, 500, 50, rgb_value{ .r = 100, .g = 100, .b = 100 });
-
-            _ = win.TextOutW(device_context, 100, 100, uni.utf8ToUtf16LeStringLiteral("Hellow").ptr, 6);
-
-            const hFont1: win.HFONT = win.CreateFontW(48, 0, 0, 0, win.FW_NORMAL, win.FALSE, win.TRUE, win.FALSE, win.DEFAULT_CHARSET, win.OUT_OUTLINE_PRECIS, win.CLIP_DEFAULT_PRECIS, win.CLEARTYPE_QUALITY, win.VARIABLE_PITCH, win.TEXT(std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI")));
-            _ = win.SelectObject(device_context, hFont1);
-            var rect: win.RECT = undefined;
-
-            //Sets the coordinates for the rectangle in which the text is to be formatted.
-            _ = win.SetRect(&rect, 100, 100, 700, 200);
-            _ = win.SetTextColor(device_context, win.RGB(255, 0, 0));
-            _ = win.DrawTextW(device_context, win.TEXT(uni.utf8ToUtf16LeStringLiteral("Drawing Text with Impact")), -1, &rect, win.DT_NOCLIP);
-
-            _ = win.DeleteObject(hFont1);
-
+            //
+            // const hFont1: win.HFONT = win.CreateFontW(48, 0, 0, 0, win.FW_NORMAL, win.FALSE, win.TRUE, win.FALSE, win.DEFAULT_CHARSET, win.OUT_OUTLINE_PRECIS, win.CLIP_DEFAULT_PRECIS, win.CLEARTYPE_QUALITY, win.VARIABLE_PITCH, win.TEXT(std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI")));
+            // _ = win.SelectObject(device_context, hFont1);
+            // var rect: win.RECT = undefined;
+            //
+            // //Sets the coordinates for the rectangle in which the text is to be formatted.
+            // _ = win.SetRect(&rect, 100, 100, 700, 200);
+            // _ = win.SetTextColor(device_context, win.RGB(255, 0, 0));
+            // _ = win.DrawTextW(device_context, win.TEXT(uni.utf8ToUtf16LeStringLiteral("Drawing Text with Impact")), -1, &rect, win.DT_NOCLIP);
+            // _ = win.TextOutW(device_context, 100, 300, uni.utf8ToUtf16LeStringLiteral("Hellow").ptr, 6);
+            //
+            // _ = win.DeleteObject(hFont1);
+            //draw_text(window_handle);
             _ = win.ReleaseDC(window_handle, device_context);
             // var count_current: win.LARGE_INTEGER = undefined;
             // const cycle_count_current: u64 = helpers.rdtsc();
@@ -308,6 +311,25 @@ pub fn Create() void {
         }
     }
 }
+
+// font family
+// font size
+// underline
+// bold
+// italics
+// weight
+//
+// pub fn draw_text() void {
+//     // get the current device context
+//     const device_context: win.HDC = win.GetDC(window_handle);
+//     const hFont1: win.HFONT = win.CreateFontW(20, 0, 0, 0, win.FW_NORMAL, win.FALSE, win.TRUE, win.FALSE, win.DEFAULT_CHARSET, win.OUT_OUTLINE_PRECIS, win.CLIP_DEFAULT_PRECIS, win.CLEARTYPE_QUALITY, win.VARIABLE_PITCH, win.TEXT(std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI")));
+//     _ = win.SelectObject(device_context, hFont1);
+//
+//     _ = win.SelectObject(device_context, &bitmap_memory);
+//     _ = win.SetTextColor(device_context, win.RGB(255, 0, 0));
+//     _ = win.TextOutW(device_context, 100, 300, uni.utf8ToUtf16LeStringLiteral("Hellow").ptr, 6);
+//     _ = win.DeleteObject(hFont1);
+// }
 
 const FILE_SIZE_MAX = 5 * 1024;
 

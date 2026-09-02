@@ -92,6 +92,13 @@ const AttributeKey = enum(u8) {
     null,
 };
 
+const Dimensions = struct {
+    content: LayoutRect = .{},
+    padding: EdgeSizes = .{},
+    border: EdgeSizes = .{},
+    margin: EdgeSizes = .{},
+};
+
 const EdgeSizes = struct {
     left: i32 = 0,
     right: i32 = 0,
@@ -159,7 +166,7 @@ const Node = struct {
     class: String = .{},
     text: String = .{},
     tag: Tag = .dead,
-    rect: LayoutRect = .{},
+    dimensions: Dimensions = .{},
 
     id_parent: u8 = 0,
     id_node: u8 = 0,
@@ -168,6 +175,17 @@ const Node = struct {
 const Dom = struct {
     nodes: [ELEMENTS_MAXIMUM_NUMBER]Node = undefined,
     nodes_size: u8 = 0,
+
+    pub fn return_parent_index(self: *Dom, index: usize) u8 {
+        for (self.nodes, 0..) |node, i| {
+            if (self.nodes[index].id_parent == node.id_node) {
+                if (node.tag != .text) {
+                    return @as(u8, @intCast(i));
+                }
+            }
+        }
+        return 0;
+    }
 };
 
 var dom_nodes: Dom = .{};
@@ -223,7 +241,6 @@ const HTMlParser = struct {
     current_position: u16 = 0,
 
     node_number: u8 = 0,
-    child_number: u8 = 0,
 
     pub fn eof(self: *HTMlParser) bool {
         return self.current_position >= self.length_content;
@@ -738,22 +755,36 @@ const CSSParser = struct {
 };
 
 pub fn calculate_width(index: usize) void {
+    if (index == 0) {
+        dom_nodes.nodes[0].dimensions.content.x = 0;
+        dom_nodes.nodes[0].dimensions.content.y = 0;
+        dom_nodes.nodes[0].dimensions.content.width = win.width_current;
+        return;
+    }
+
+    if (dom_nodes.nodes[index].tag == .text) {
+        // maybe text doesn't need any of this ?
+        // TODO: will need to change this as text
+        const parent = dom_nodes.nodes[dom_nodes.return_parent_index(index)];
+        dom_nodes.nodes[index].dimensions.content.x = parent.dimensions.content.x;
+        dom_nodes.nodes[index].dimensions.content.y = parent.dimensions.content.y;
+        dom_nodes.nodes[index].dimensions.content.width = parent.dimensions.content.width;
+        return;
+    }
 
     // total will be the min space required by the element
     var margin_left = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.left else 0;
-    var margin_right = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.margin).?.*.value.edge_value.right;
+    var margin_right = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.right else 0;
+    const padding_left = if (dom_nodes.nodes[index].attributes.return_attribute(.padding)) |attribute| attribute.value.edge_value.left else 0;
+    const padding_right = if (dom_nodes.nodes[index].attributes.return_attribute(.padding)) |attribute| attribute.value.edge_value.right else 0;
+    const border_width_left = if (dom_nodes.nodes[index].attributes.return_attribute(.border_width)) |attribute| attribute.value.edge_value.left else 0;
+    const border_width_right = if (dom_nodes.nodes[index].attributes.return_attribute(.border_width)) |attribute| attribute.value.edge_value.right else 0;
 
-    const padding_left = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.padding).?.*.value.edge_value.left;
-    const padding_right = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.padding).?.*.value.edge_value.right;
-
-    const border_width_left = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.border_width).?.*.value.edge_value.left;
-    const border_width_right = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.border_width).?.*.value.edge_value.right;
-
-    var width = dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.width).?.*.value.integer_value;
+    var width = if (dom_nodes.nodes[index].attributes.return_attribute(.width)) |attribute| attribute.value.integer_value else 0;
 
     const total = margin_left + margin_right + padding_left + padding_right + border_width_left + border_width_right + width;
 
-    const underflow = dom_nodes.nodes[dom_nodes.nodes[index].id_parent].rect.width - total;
+    const underflow = dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.width - total;
 
     // we are gonna assume 0 value means auto which means it can expand or contract
     // need to match 5 cases
@@ -784,24 +815,63 @@ pub fn calculate_width(index: usize) void {
 
     // create a dimensions struct on the node and update these values in that
     // don't update the actual html and css values back
-    dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.margin).?.*.value.edge_value.left = margin_left;
-    dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.margin).?.*.value.edge_value.right = margin_right;
-    dom_nodes.nodes[index].attributes.return_attribute(AttributeKey.width).?.*.value.integer_value = width;
+    dom_nodes.nodes[index].dimensions.margin.left = margin_left;
+    dom_nodes.nodes[index].dimensions.margin.right = margin_right;
+    dom_nodes.nodes[index].dimensions.content.width = width;
 }
 
-pub fn return_css_int_value(index: u8, key: AttributeKey) i32 {
-    const attribute = dom_nodes.nodes[index].attributes.return_attributes(key) orelse return 0;
-    const attribute_value: i32 = std.fmt.parseInt(
-        i32,
-        // -2 to remove the "px"
-        css_parser.content[attribute.value.start..(attribute.value.start + attribute.value.length - 2)],
-        10,
-    ) catch 0;
+pub fn calculate_position_x(index: u8) void {
+    const parent_dimensions = dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions;
 
-    return attribute_value;
+    const margin_left = dom_nodes.nodes[index].dimensions.margin.left;
+
+    const padding_left = dom_nodes.nodes[index].dimensions.padding.left;
+
+    const border_left = dom_nodes.nodes[index].dimensions.border.left;
+
+    dom_nodes.nodes[index].dimensions.content.x = parent_dimensions.content.x + margin_left + border_left + padding_left;
 }
 
-// pub fn calculate_position_x(index: u8) void {}
+// pub fn calculate_position_y(index: u8) void {
+//     const parent_dimensions = dom_nodes.nodes[dom_nodes.nodes[index].id_parent].dimensions;
+//     const margin_top = dom_nodes.nodes[index].dimensions.margin.top;
+//
+//     const padding_top = dom_nodes.nodes[index].dimensions.padding.top;
+//
+//     const border_top = dom_nodes.nodes[index].dimensions.border.top;
+//
+//
+//
+// }
+
+pub fn calculate_height(index: u8) void {
+    if (dom_nodes.nodes[index].tag == .text) {
+        dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.height += 20;
+        // calculate the text height and add it to its parents
+    } else {
+        const margin_top = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.top else 0;
+        const margin_bottom = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.bottom else 0;
+
+        const padding_top = if (dom_nodes.nodes[index].attributes.return_attribute(.padding)) |attribute| attribute.value.edge_value.top else 0;
+        const padding_bottom = if (dom_nodes.nodes[index].attributes.return_attribute(.padding)) |attribute| attribute.value.edge_value.bottom else 0;
+
+        const border_width_top = if (dom_nodes.nodes[index].attributes.return_attribute(.border_width)) |attribute| attribute.value.edge_value.top else 0;
+        const border_width_bottom = if (dom_nodes.nodes[index].attributes.return_attribute(.border_width)) |attribute| attribute.value.edge_value.bottom else 0;
+
+        const height = if (dom_nodes.nodes[index].attributes.return_attribute(.height)) |attribute| attribute.value.integer_value else 0;
+
+        dom_nodes.nodes[index].dimensions.content.height += margin_top + margin_bottom + padding_top + padding_bottom + border_width_top + border_width_bottom + height;
+        std.debug.print("\n Height of node at {d}: {d}", .{ index, dom_nodes.nodes[index].dimensions.content.height });
+
+        // html parent index is also 0 so we have to except that
+        if (dom_nodes.nodes[index].tag == .html) return;
+        dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.height += dom_nodes.nodes[index].dimensions.content.height;
+        std.debug.print("\n Height of node parent at {d}: {d}", .{
+            dom_nodes.return_parent_index(index),
+            dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.height,
+        });
+    }
+}
 
 pub fn calculate_layout() void {
     // calculate width of everything
@@ -811,7 +881,18 @@ pub fn calculate_layout() void {
     var i: u8 = 0;
     while (i < dom_nodes.nodes_size) : (i += 1) {
         calculate_width(i);
-        // calculate_position_x(i);
+        calculate_position_x(i);
+    }
+    i = dom_nodes.nodes_size - 1;
+    // since i is u8 it can't go to -1
+    while (i > 0) : (i -= 1) {
+        calculate_height(i);
+    }
+    // finanlly calculate height of the html tag
+    calculate_height(0);
+
+    if (builtin.mode == .Debug) {
+        debug_print();
     }
 }
 
@@ -851,12 +932,12 @@ pub fn debug_print() void {
 
         // Layout rectangle
         std.debug.print(
-            "rect:      x={d}, y={d}, width={d}, height={d}\n",
+            "Content Size:      x={d}, y={d}, width={d}, height={d}\n",
             .{
-                node.rect.x,
-                node.rect.y,
-                node.rect.width,
-                node.rect.height,
+                node.dimensions.content.x,
+                node.dimensions.content.y,
+                node.dimensions.content.width,
+                node.dimensions.content.height,
             },
         );
 
@@ -865,22 +946,22 @@ pub fn debug_print() void {
             node.attributes.size_attributes,
         });
 
-        var j: usize = 0;
-        while (j < node.attributes.size_attributes) : (j += 1) {
-            const attribute = node.attributes.attributes[j];
-
-            const value_start = attribute.value.string_value.start;
-            const value_end = value_start + attribute.value.string_value.length;
-
-            std.debug.print(
-                "  {s}: \"{s}\" ({s})\n",
-                .{
-                    @tagName(attribute.key),
-                    css_parser.content[value_start..value_end],
-                    @tagName(attribute.specificity),
-                },
-            );
-        }
+        //        var j: usize = 0;
+        // while (j < node.attributes.size_attributes) : (j += 1) {
+        //     const attribute = node.attributes.attributes[j];
+        //
+        //     const value_start = attribute.value.string_value.start;
+        //     const value_end = value_start + attribute.value.string_value.length;
+        //
+        //     std.debug.print(
+        //         "  {s}: \"{s}\" ({s})\n",
+        //         .{
+        //             @tagName(attribute.key),
+        //             css_parser.content[value_start..value_end],
+        //             @tagName(attribute.specificity),
+        //         },
+        //     );
+        // }
     }
 }
 
