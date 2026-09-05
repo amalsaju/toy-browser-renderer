@@ -1,4 +1,4 @@
-//const win = @import("win32api.zig");
+//const win = @import("win32api.zig")VG
 const win = @cImport(@cInclude("windows.h"));
 const helpers = @import("helpers.zig");
 const main = @import("main.zig");
@@ -6,11 +6,14 @@ const main = @import("main.zig");
 const std = @import("std");
 const uni = std.unicode;
 
-const WIDTH_MIN = 640;
-const HEIGHT_MIN = 360;
+const WIDTH_MIN = 1080;
+const HEIGHT_MIN = 720;
 
-pub const WIDTH_MAX = 1920;
-pub const HEIGHT_MAX = 1080;
+pub const RENDER_WIDTH_MAX = 1920;
+pub const RENDER_HEIGHT_MAX = 1080;
+
+pub var WINDOW_WIDTH_MAX: i32 = undefined;
+pub var WINDOW_HEIGHT_MAX: i32 = undefined;
 const BYTES_PER_PIXEL = 4;
 
 // I think windows make it signed int
@@ -19,8 +22,12 @@ const BYTES_PER_PIXEL = 4;
 pub var width_current: i32 = 0;
 pub var height_current: i32 = 0;
 var bitmap_info: win.BITMAPINFO = undefined;
-var bitmap_memory: [HEIGHT_MAX * WIDTH_MAX]u32 = undefined;
+var bitmap_memory: [RENDER_HEIGHT_MAX * RENDER_WIDTH_MAX]u32 = undefined;
 pub var running: bool = true;
+
+var layout_dirty = true;
+var scroll_position_y: i32 = 0;
+var amount_scroll: u8 = 50;
 
 pub const rgb_value = struct {
     // a is not used
@@ -33,20 +40,20 @@ pub const rgb_value = struct {
     b: u8 = 0,
 };
 
-fn render_box(x: i32, y: i32, width: i32, height: i32, rgb: rgb_value) void {
-    var y_offset: i32 = y;
-    while (y_offset < height_current) : (y_offset += 1) {
+pub fn render_box(x: i32, y: i32, width: i32, height: i32, rgb: rgb_value) void {
+    var y_offset: i32 = y - scroll_position_y;
+    while (y_offset < y + height - scroll_position_y) : (y_offset += 1) {
         var x_offset: i32 = x;
 
-        while (x_offset < x + width_current) : (x_offset += 1) {
-            const pixel: u32 = @intCast(y_offset * width_current + x_offset);
-
-            if ((y_offset >= y and y_offset < (y + height)) and (x_offset >= x and x_offset < (x + width))) {
-                bitmap_memory[pixel] =
-                    (@as(u32, rgb.r) << 16) |
-                    (@as(u16, rgb.g) << 8) |
-                    rgb.b;
+        while (x_offset < x + width) : (x_offset += 1) {
+            if (x_offset < 0 or y_offset < 0 or x_offset >= width_current or y_offset >= height_current) {
+                continue;
             }
+            const pixel: u32 = @intCast(y_offset * width_current + x_offset);
+            bitmap_memory[pixel] =
+                (@as(u32, rgb.r) << 16) |
+                (@as(u16, rgb.g) << 8) |
+                rgb.b;
         }
     }
 }
@@ -85,9 +92,6 @@ fn resize_dib_section(width: i32, height: i32) void {
         return;
     }
 
-    if (width > WIDTH_MAX or height > HEIGHT_MAX) {
-        return;
-    }
     bitmap_info.bmiHeader.biSize = @sizeOf(win.BITMAPINFOHEADER);
     bitmap_info.bmiHeader.biWidth = width;
     bitmap_info.bmiHeader.biHeight = -height; // Top-Down
@@ -104,9 +108,6 @@ fn resize_dib_section(width: i32, height: i32) void {
     width_current = width;
     height_current = height;
 
-    // update the layout
-    main.calculate_layout();
-
     // we've already set the max amount of data the bitmap memory can hold which is 720p
     // So here we can play around with any resolution upto 720p
     // u8 is 1 byte => 8 means 8 bits
@@ -115,24 +116,26 @@ fn resize_dib_section(width: i32, height: i32) void {
     //const bitmap_memory_bytes: u8 = (width_current * height_current) * 4;
 
     //const pitch: u8 = BYTES_PER_PIXEL * width;
-    render_box(0, 0, WIDTH_MAX, HEIGHT_MAX, rgb_value{ .r = 255, .g = 255, .b = 255 });
+    //render_box(0, 0, WIDTH_MAX, HEIGHT_MAX, rgb_value{ .r = 255, .g = 255, .b = 255 });
 }
 
 fn update_window(device_context: win.HDC, window_rect: win.RECT, x: i32, y: i32) void {
-    const window_width: i32 = window_rect.right - window_rect.left;
-    const window_height: i32 = window_rect.bottom - window_rect.top;
+    const width_window: i32 = window_rect.right - window_rect.left;
+    const height_window: i32 = window_rect.bottom - window_rect.top;
 
     // rectangle to rectangle copy- can be different size due to the stretch func
     _ = win.StretchDIBits(
         device_context,
+        // destination
+        x,
+        y,
+        width_window,
+        height_window,
+        // source
         x,
         y,
         width_current,
         height_current,
-        x,
-        y,
-        window_width,
-        window_height,
         &bitmap_memory,
         &bitmap_info,
         win.DIB_RGB_COLORS,
@@ -149,14 +152,36 @@ export fn Wndproc(window: win.HWND, message: win.UINT, wparam: win.WPARAM, lpara
             _ = win.GetClientRect(window, &client_rect);
             var width: i32 = client_rect.right - client_rect.left;
             var height: i32 = client_rect.bottom - client_rect.top;
-            if (width > WIDTH_MAX) {
-                width = WIDTH_MAX;
+            if (width > RENDER_WIDTH_MAX) {
+                width = RENDER_WIDTH_MAX;
             }
-            if (height > HEIGHT_MAX) {
-                height = HEIGHT_MAX;
+            if (height > RENDER_HEIGHT_MAX) {
+                height = RENDER_HEIGHT_MAX;
             }
 
             resize_dib_section(width, height);
+
+            // update the layout
+            layout_dirty = true;
+        },
+        win.WM_KEYDOWN => {
+            switch (wparam) {
+                win.VK_UP, 'W' => {
+                    if (scroll_position_y - amount_scroll >= 0) {
+                        scroll_position_y -= amount_scroll;
+                    }
+                    std.debug.print("Key is presssed", .{});
+                    layout_dirty = true;
+                },
+                win.VK_DOWN, 'S' => {
+                    if (scroll_position_y + height_current + amount_scroll <= main.return_html_height()) {
+                        scroll_position_y += amount_scroll;
+                    }
+                    std.debug.print("Down Pressed. Current scroll position: {d}\n", .{scroll_position_y});
+                    layout_dirty = true;
+                },
+                else => {},
+            }
         },
         win.WM_GETMINMAXINFO => {
             // gets a pointer to the window minmaxinfo
@@ -168,8 +193,8 @@ export fn Wndproc(window: win.HWND, message: win.UINT, wparam: win.WPARAM, lpara
             minmax_info.ptMinTrackSize.y = HEIGHT_MIN;
 
             // set the max.
-            minmax_info.ptMaxTrackSize.x = WIDTH_MAX;
-            minmax_info.ptMaxTrackSize.y = HEIGHT_MAX;
+            minmax_info.ptMaxTrackSize.x = WINDOW_WIDTH_MAX;
+            minmax_info.ptMaxTrackSize.y = WINDOW_HEIGHT_MAX;
 
             return 0;
         },
@@ -190,7 +215,6 @@ export fn Wndproc(window: win.HWND, message: win.UINT, wparam: win.WPARAM, lpara
             _ = win.GetClientRect(window, &client_rect);
 
             update_window(device_context, client_rect, 0, 0);
-
             _ = win.EndPaint(window, &paint);
             result = 0;
         },
@@ -233,14 +257,31 @@ pub fn Create() void {
     // returns 0 if RegisterClass fails
     _ = win.RegisterClassW(&window_class);
 
+    var rect = win.RECT{
+        .left = 0,
+        .top = 0,
+        .right = 1920,
+        .bottom = 1080,
+    };
+
+    _ = win.AdjustWindowRectEx(
+        &rect,
+        win.WS_OVERLAPPEDWINDOW,
+        0,
+        0,
+    );
+
+    WINDOW_HEIGHT_MAX = rect.bottom - rect.top;
+    WINDOW_WIDTH_MAX = rect.right - rect.left;
+
     const window_handle: win.HWND = win.CreateWindowW(
         window_class.lpszClassName,
         window_name,
         win.WS_OVERLAPPEDWINDOW | win.WS_VISIBLE,
         win.CW_USEDEFAULT,
         win.CW_USEDEFAULT,
-        800,
-        450,
+        1080,
+        720,
         null, // hWndParent
         null, // hMenu
         window_class.hInstance,
@@ -255,7 +296,8 @@ pub fn Create() void {
 
         //const frequency: i64 = frequency_processor.QuadPart;
 
-        //var cycle_count_previous: u64 = helpers.rdtsc();
+        main.calculate_layout();
+        main.render_layout();
 
         while (running) {
             var message: win.MSG = undefined;
@@ -275,8 +317,14 @@ pub fn Create() void {
 
             var client_rect: win.RECT = undefined;
             _ = win.GetClientRect(window_handle, &client_rect);
-            update_window(device_context, client_rect, 0, 0);
 
+            if (layout_dirty) {
+                render_box(0, 0, RENDER_WIDTH_MAX, RENDER_HEIGHT_MAX, rgb_value{ .r = 255, .g = 255, .b = 255 });
+                main.calculate_layout();
+                main.render_layout();
+                layout_dirty = false;
+                _ = win.InvalidateRect(window_handle, null, win.FALSE);
+            }
             //render_gradient(x_offset, 0);
             //render_box(100, 100, 300, 500, rgb_value{ .r = 0, .g = 255, .b = 0 });
             //render_box(200, 200, 500, 50, rgb_value{ .r = 100, .g = 100, .b = 100 });
@@ -336,9 +384,9 @@ const FILE_SIZE_MAX = 5 * 1024;
 pub fn read_file(buffer: *[FILE_SIZE_MAX]u8, is_html: bool) u32 {
     var file: win.HANDLE = undefined;
     if (is_html) {
-        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/test.html"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
+        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/test1.html"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
     } else {
-        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/test.css"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
+        file = win.CreateFileW(std.unicode.utf8ToUtf16LeStringLiteral("src/test1.css"), win.GENERIC_READ, win.FILE_SHARE_READ, null, win.OPEN_EXISTING, win.FILE_ATTRIBUTE_NORMAL, null);
     }
     defer _ = win.CloseHandle(file);
 

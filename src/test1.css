@@ -1,0 +1,58 @@
+html {
+  display: block;
+  background-color: #cd7dab;
+}
+
+body {
+  margin: 10px;
+  padding: 10px;
+  background-color: #dcd7ba;
+  height: 500px;
+}
+
+h1 {
+  margin: 10px;
+  padding: 10px;
+  width: 300px;
+  height: 50px;
+  background-color: #7e9cd8;
+}
+
+#main {
+  margin: 15px;
+  padding: 10px;
+  width: 500px;
+  height: 120px;
+  background-color: #98bb6c;
+}
+
+p {
+  margin: 8px;
+  padding: 6px;
+  width: 250px;
+  height: 40px;
+  background-color: #e6c384;
+}
+
+em {
+  margin: 5px;
+  width: 100px;
+  height: 20px;
+  background-color: #d27e99;
+}
+
+.testclass {
+  margin: 20px;
+  padding: 10px;
+  width: 400px;
+  height: 200px;
+  background-color: #7fb4ca;
+}
+
+#section {
+  margin: 25px;
+  padding: 15px;
+  width: 450px;
+  height: 180px;
+  background-color: #ffa066;
+}

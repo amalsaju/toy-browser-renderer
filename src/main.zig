@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const win = @import("win.zig");
+const rand = std.crypto;
 
 const FILE_SIZE_BYTES_MAXIMUM = 5 * 1024;
 const ELEMENTS_MAXIMUM_NUMBER = 128;
@@ -139,7 +140,7 @@ const AttributesList = struct {
         }
 
         self.attributes[self.size_attributes] = attribute;
-        std.debug.print("Adding attribute: {s}\n", .{@tagName(attribute.key)});
+        //std.debug.print("Adding attribute: {s}\n", .{@tagName(attribute.key)});
         self.size_attributes += 1;
     }
 
@@ -166,7 +167,7 @@ const Node = struct {
     class: String = .{},
     text: String = .{},
     tag: Tag = .dead,
-    dimensions: Dimensions = .{},
+    dimensions: Dimensions = undefined,
 
     id_parent: u8 = 0,
     id_node: u8 = 0,
@@ -227,11 +228,11 @@ const static_string_map_attribute_key = std.StaticStringMap(AttributeKey).initCo
     .{ "align-items", .align_items },
 });
 
-pub fn print_text_value(content: *[FILE_SIZE_BYTES_MAXIMUM]u8, string: String) void {
-    const start = string.start;
-    const end = start + string.length;
-    std.debug.print("\n The string value is: {s}\n", .{content[start..end]});
-}
+// pub fn print_text_value(content: *[FILE_SIZE_BYTES_MAXIMUM]u8, string: String) void {
+//     const start = string.start;
+//     const end = start + string.length;
+//     std.debug.print("\n The string value is: {s}\n", .{content[start..end]});
+// }
 
 const HTMlParser = struct {
     content: [FILE_SIZE_BYTES_MAXIMUM]u8 = undefined,
@@ -333,9 +334,9 @@ const HTMlParser = struct {
         };
     }
 
-    pub fn print_current_character(self: *HTMlParser) void {
-        std.debug.print("Current character:{c}\n", .{self.content[self.current_position]});
-    }
+    // pub fn print_current_character(self: *HTMlParser) void {
+    //     std.debug.print("Current character:{c}\n", .{self.content[self.current_position]});
+    // }
 
     pub fn parse_id(self: *HTMlParser) void {
         // read id
@@ -344,19 +345,19 @@ const HTMlParser = struct {
         // read the value
         // read ' or "
         const id = self.content[self.current_position..(self.current_position + 3)];
-        std.debug.print("\nId value: {s} \n", .{id});
+        //std.debug.print("\nId value: {s} \n", .{id});
         if (!std.mem.eql(u8, "id=", id)) {
             return;
         }
 
         self.current_position += 3;
-        self.print_current_character();
+        //self.print_current_character();
         self.expect_character('"');
-        self.print_current_character();
+        //self.print_current_character();
         const id_value = self.parse_text();
-        print_text_value(&self.content, id_value);
+        //print_text_value(&self.content, id_value);
         dom_nodes.nodes[dom_nodes.nodes_size - 1].id = id_value;
-        self.print_current_character();
+        //self.print_current_character();
         self.expect_character('"');
     }
 
@@ -367,16 +368,16 @@ const HTMlParser = struct {
         // read the value
         // read ' or "
         const class = self.content[self.current_position..(self.current_position + 6)];
-        std.debug.print("\nClass string: {s} \n", .{class});
+        //std.debug.print("\nClass string: {s} \n", .{class});
         if (!std.mem.eql(u8, "class=", class)) {
             return;
         }
 
         self.current_position += 6;
         self.expect_character('"');
-        self.print_current_character();
+        //self.print_current_character();
         const class_value = self.parse_text();
-        print_text_value(&self.content, class_value);
+        //print_text_value(&self.content, class_value);
         dom_nodes.nodes[dom_nodes.nodes_size - 1].class = class_value;
         self.expect_character('"');
     }
@@ -499,17 +500,18 @@ const CSSParser = struct {
 
     current_position: u16 = 0,
 
-    pub fn print_current_character(self: *CSSParser) void {
-        std.debug.print("Current character:{d}\n", .{self.content[self.current_position]});
-    }
+    // pub fn print_current_character(self: *CSSParser) void {
+    //     std.debug.print("Current character:{d}\n", .{self.content[self.current_position]});
+    // }
 
     fn eof(self: *CSSParser) bool {
         return self.current_position >= self.length_content;
     }
 
-    fn consume_whitespace(self: *CSSParser) void {
+    fn consume_space_and_controls(self: *CSSParser) void {
         while (!self.eof()) {
-            if (self.content[self.current_position] != ' ') {
+            const character = self.content[self.current_position];
+            if (character == ' ' or (character == '\r' or (character == '\n'))) {
                 self.current_position += 1;
             } else {
                 break;
@@ -633,15 +635,24 @@ const CSSParser = struct {
 
         while (!self.eof()) {
             // parse tag
+            self.consume_space_and_controls();
             const selector: CSSSelector = self.parse_selector();
+            self.consume_space_and_controls();
             self.expect_character('{');
             while (!self.starts_with_char('}')) {
+                self.consume_space_and_controls();
                 const key_string: String = self.parse_attribute_key();
+
+                self.consume_space_and_controls();
                 const key_name = self.content[key_string.start..(key_string.start + key_string.length)];
 
                 const key: AttributeKey = static_string_map_attribute_key.get(key_name) orelse .null;
                 self.expect_character(':');
+
+                self.consume_space_and_controls();
                 const value_string = self.parse_attribute_value();
+
+                self.consume_space_and_controls();
                 self.expect_character(';');
 
                 const selector_start = selector.selector.start;
@@ -673,10 +684,12 @@ const CSSParser = struct {
                     .text_color, .background_color => {
                         // value is a rgb struct
                         // start from 1 because 0 is #
-                        const color = std.fmt.parseInt(u32, css_parser.content[(value_start + 1)..], 16) catch 0;
+                        const color = std.fmt.parseInt(u32, css_parser.content[(value_start + 1)..(value_start + 7)], 16) catch 0;
                         const r: u8 = @truncate((color >> 16) & 0xFF);
                         const g: u8 = @truncate((color >> 8) & 0xFF);
                         const b: u8 = @truncate(color & 0xFF);
+                        std.debug.print("Color value: {s}", .{css_parser.content[(value_start + 1)..(value_start + 7)]});
+                        std.debug.print("Color from css : r:{d}, g:{d}, b:{d} ", .{ r, g, b });
                         value = .{
                             .color_value = win.rgb_value{ .r = r, .g = g, .b = b },
                         };
@@ -720,8 +733,8 @@ const CSSParser = struct {
                             const end = start + dom_nodes.nodes[index].class.length;
                             const className = html_parser.content[start..end];
 
-                            std.debug.print("ClassName: {s}", .{className});
-                            print_text_value(&self.content, selector.selector);
+                            //std.debug.print("ClassName: {s}", .{className});
+                            //print_text_value(&self.content, selector.selector);
 
                             if (std.mem.eql(u8, className, self.content[selector_start..selector_end])) {
                                 dom_nodes.nodes[index].attributes.add_attribute(attribute);
@@ -742,12 +755,13 @@ const CSSParser = struct {
                     },
                 }
 
-                std.debug.print("Selector: {s} | Attribute: {s} | Value:{s} | Specificity:{s}\n", .{
-                    self.content[selector_start..selector_end],
-                    @tagName(key),
-                    self.content[value_start..value_end],
-                    @tagName(selector.specificity),
-                });
+                // std.debug.print("Selector: {s} | Attribute: {s} | Value:{s} | Specificity:{s}\n", .{
+                //     self.content[selector_start..selector_end],
+                //     @tagName(key),
+                //     self.content[value_start..value_end],
+                //     @tagName(selector.specificity),
+                // });
+                self.consume_space_and_controls();
             }
             self.expect_character('}');
         }
@@ -771,6 +785,7 @@ pub fn calculate_width(index: usize) void {
         dom_nodes.nodes[index].dimensions.content.width = parent.dimensions.content.width;
         return;
     }
+    // for certain tag, if there is no width specified, get the width of the text in it
 
     // total will be the min space required by the element
     var margin_left = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.left else 0;
@@ -782,7 +797,7 @@ pub fn calculate_width(index: usize) void {
 
     var width = if (dom_nodes.nodes[index].attributes.return_attribute(.width)) |attribute| attribute.value.integer_value else 0;
 
-    const total = margin_left + margin_right + padding_left + padding_right + border_width_left + border_width_right + width;
+    const total = padding_left + padding_right + border_width_left + border_width_right + width;
 
     const underflow = dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.width - total;
 
@@ -817,6 +832,11 @@ pub fn calculate_width(index: usize) void {
     // don't update the actual html and css values back
     dom_nodes.nodes[index].dimensions.margin.left = margin_left;
     dom_nodes.nodes[index].dimensions.margin.right = margin_right;
+    dom_nodes.nodes[index].dimensions.padding.left = padding_left;
+    dom_nodes.nodes[index].dimensions.padding.right = padding_right;
+    dom_nodes.nodes[index].dimensions.border.left = border_width_left;
+    dom_nodes.nodes[index].dimensions.border.right = border_width_right;
+
     dom_nodes.nodes[index].dimensions.content.width = width;
 }
 
@@ -825,29 +845,62 @@ pub fn calculate_position_x(index: u8) void {
 
     const margin_left = dom_nodes.nodes[index].dimensions.margin.left;
 
-    const padding_left = dom_nodes.nodes[index].dimensions.padding.left;
-
-    const border_left = dom_nodes.nodes[index].dimensions.border.left;
-
-    dom_nodes.nodes[index].dimensions.content.x = parent_dimensions.content.x + margin_left + border_left + padding_left;
+    dom_nodes.nodes[index].dimensions.content.x = parent_dimensions.content.x + parent_dimensions.padding.left + parent_dimensions.border.left + margin_left;
 }
 
-// pub fn calculate_position_y(index: u8) void {
-//     const parent_dimensions = dom_nodes.nodes[dom_nodes.nodes[index].id_parent].dimensions;
-//     const margin_top = dom_nodes.nodes[index].dimensions.margin.top;
-//
-//     const padding_top = dom_nodes.nodes[index].dimensions.padding.top;
-//
-//     const border_top = dom_nodes.nodes[index].dimensions.border.top;
-//
-//
-//
-// }
+pub fn return_html_height() i32 {
+    return dom_nodes.nodes[0].dimensions.content.height;
+}
 
 pub fn calculate_height(index: u8) void {
     if (dom_nodes.nodes[index].tag == .text) {
+        // const parent_id_returned = dom_nodes.return_parent_index(index);
+        // const parent_node = dom_nodes.nodes[dom_nodes.return_parent_index(index)];
         dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.height += 20;
+
         // calculate the text height and add it to its parents
+    } else if (dom_nodes.nodes[index].tag == .br) {
+        dom_nodes.nodes[index].dimensions.content.height = 20;
+    } else if (dom_nodes.nodes[index].tag == .html) {
+        const current_height = dom_nodes.nodes[0].dimensions.content.height;
+        dom_nodes.nodes[0].dimensions.content.height = if (current_height < win.RENDER_HEIGHT_MAX) win.RENDER_HEIGHT_MAX else current_height;
+    } else if (dom_nodes.nodes[index].tag == .body) {
+        // use the html height attribute rather than the dimension if the height is available
+        // else use the html height dimension
+        const margin_top = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.top else 0;
+        const margin_bottom = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.bottom else 0;
+
+        const padding_top = if (dom_nodes.nodes[index].attributes.return_attribute(.padding)) |attribute| attribute.value.edge_value.top else 0;
+        const padding_bottom = if (dom_nodes.nodes[index].attributes.return_attribute(.padding)) |attribute| attribute.value.edge_value.bottom else 0;
+
+        const border_width_top = if (dom_nodes.nodes[index].attributes.return_attribute(.border_width)) |attribute| attribute.value.edge_value.top else 0;
+        const border_width_bottom = if (dom_nodes.nodes[index].attributes.return_attribute(.border_width)) |attribute| attribute.value.edge_value.bottom else 0;
+
+        var height: i32 = 0;
+
+        // if body has a height attribute => use that
+        if (dom_nodes.nodes[index].attributes.return_attribute(.height)) |attribute| {
+            height = attribute.value.integer_value;
+        }
+        // else if html has a height attribute use that
+        else if (dom_nodes.nodes[0].attributes.return_attribute(.height)) |attribute| {
+            height = attribute.value.integer_value;
+        }
+
+        dom_nodes.nodes[index].dimensions.content.height += padding_top + padding_bottom + border_width_top + border_width_bottom + height;
+        dom_nodes.nodes[index].dimensions.margin.top = margin_top;
+        dom_nodes.nodes[index].dimensions.margin.bottom = margin_bottom;
+        dom_nodes.nodes[index].dimensions.padding.top = padding_top;
+        dom_nodes.nodes[index].dimensions.padding.bottom = padding_bottom;
+        dom_nodes.nodes[index].dimensions.border.top = border_width_top;
+        dom_nodes.nodes[index].dimensions.border.bottom = border_width_bottom;
+
+        dom_nodes.nodes[index].dimensions.content.height = height;
+        // add to the height of the html if overflowing
+        const overflow: i32 = margin_top + margin_bottom + dom_nodes.nodes[index].dimensions.content.height - dom_nodes.nodes[0].dimensions.content.height;
+        if (overflow > 0) {
+            dom_nodes.nodes[0].dimensions.content.height += overflow;
+        }
     } else {
         const margin_top = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.top else 0;
         const margin_bottom = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.bottom else 0;
@@ -858,41 +911,76 @@ pub fn calculate_height(index: u8) void {
         const border_width_top = if (dom_nodes.nodes[index].attributes.return_attribute(.border_width)) |attribute| attribute.value.edge_value.top else 0;
         const border_width_bottom = if (dom_nodes.nodes[index].attributes.return_attribute(.border_width)) |attribute| attribute.value.edge_value.bottom else 0;
 
-        const height = if (dom_nodes.nodes[index].attributes.return_attribute(.height)) |attribute| attribute.value.integer_value else 0;
+        const height = if (dom_nodes.nodes[index].attributes.return_attribute(.height)) |attribute| attribute.value.integer_value else dom_nodes.nodes[index].dimensions.content.height;
 
-        dom_nodes.nodes[index].dimensions.content.height += margin_top + margin_bottom + padding_top + padding_bottom + border_width_top + border_width_bottom + height;
-        std.debug.print("\n Height of node at {d}: {d}", .{ index, dom_nodes.nodes[index].dimensions.content.height });
+        dom_nodes.nodes[index].dimensions.content.height += padding_top + padding_bottom + border_width_top + border_width_bottom + height;
+        dom_nodes.nodes[index].dimensions.margin.top = margin_top;
+        dom_nodes.nodes[index].dimensions.margin.bottom = margin_bottom;
+        dom_nodes.nodes[index].dimensions.padding.top = padding_top;
+        dom_nodes.nodes[index].dimensions.padding.bottom = padding_bottom;
+        dom_nodes.nodes[index].dimensions.border.top = border_width_top;
+        dom_nodes.nodes[index].dimensions.border.bottom = border_width_bottom;
+
+        dom_nodes.nodes[index].dimensions.content.height = height;
+        //std.debug.print("\n Height of node at {d}: {d}", .{ index, dom_nodes.nodes[index].dimensions.content.height });
 
         // html parent index is also 0 so we have to except that
         if (dom_nodes.nodes[index].tag == .html) return;
-        dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.height += dom_nodes.nodes[index].dimensions.content.height;
-        std.debug.print("\n Height of node parent at {d}: {d}", .{
-            dom_nodes.return_parent_index(index),
-            dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.height,
-        });
+        dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.height += margin_top + margin_bottom + dom_nodes.nodes[index].dimensions.content.height;
+        // std.debug.print("\n Height of node parent at {d}: {d}", .{
+        //     dom_nodes.return_parent_index(index),
+        //     dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.height,
+        // });
     }
+}
+
+pub fn calculate_position_y(index: u8) void {
+    const parent_dimensions = dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions;
+
+    const margin_top = dom_nodes.nodes[index].dimensions.margin.top;
+    var previous_children_height: i32 = 0;
+    var i: u8 = dom_nodes.return_parent_index(index) + 1;
+    while (i < index) : (i += 1) {
+        if (dom_nodes.nodes[i].id_parent == dom_nodes.nodes[index].id_parent) {
+            previous_children_height += dom_nodes.nodes[i].dimensions.content.height + dom_nodes.nodes[i].dimensions.margin.top + dom_nodes.nodes[i].dimensions.margin.bottom;
+        }
+    }
+
+    dom_nodes.nodes[index].dimensions.content.y = parent_dimensions.content.y + parent_dimensions.padding.top + parent_dimensions.border.top + margin_top + previous_children_height;
 }
 
 pub fn calculate_layout() void {
     // calculate width of everything
     // full size - (the margins + border_width + parent padding)
-    //
+
+    for (&dom_nodes.nodes) |*node| {
+        node.*.dimensions.content.x = 0;
+        node.*.dimensions.content.y = 0;
+        node.*.dimensions.content.width = 0;
+        node.*.dimensions.content.height = 0;
+    }
 
     var i: u8 = 0;
     while (i < dom_nodes.nodes_size) : (i += 1) {
         calculate_width(i);
         calculate_position_x(i);
     }
-    i = dom_nodes.nodes_size - 1;
+    i = dom_nodes.nodes.len - 1;
     // since i is u8 it can't go to -1
+    // calculate height of the html tag
+    // because for rendering reasons, it fills the whole area
+    // even though the bounding box is smaller
+    // so for our purposes the height is the whole area
+    // irrespective of whether a height value is provided
+    // but that value will affect the body height
+    calculate_height(0);
+
     while (i > 0) : (i -= 1) {
         calculate_height(i);
     }
-    // finanlly calculate height of the html tag
-    calculate_height(0);
-
-    if (builtin.mode == .Debug) {
-        debug_print();
+    // now you can calcualte the height in order
+    while (i < dom_nodes.nodes_size) : (i += 1) {
+        calculate_position_y(i);
     }
 }
 
@@ -946,22 +1034,112 @@ pub fn debug_print() void {
             node.attributes.size_attributes,
         });
 
-        //        var j: usize = 0;
-        // while (j < node.attributes.size_attributes) : (j += 1) {
-        //     const attribute = node.attributes.attributes[j];
-        //
-        //     const value_start = attribute.value.string_value.start;
-        //     const value_end = value_start + attribute.value.string_value.length;
-        //
-        //     std.debug.print(
-        //         "  {s}: \"{s}\" ({s})\n",
-        //         .{
-        //             @tagName(attribute.key),
-        //             css_parser.content[value_start..value_end],
-        //             @tagName(attribute.specificity),
-        //         },
-        //     );
-        // }
+        for (node.attributes.attributes, 0..) |attribute, j| {
+            if (j >= node.attributes.size_attributes) break;
+            std.debug.print("{d}: {s} = ", .{
+                j + 1,
+                @tagName(attribute.key),
+            });
+
+            switch (attribute.value) {
+                .edge_value => |edge| {
+                    std.debug.print(
+                        "{{ left={d}, right={d}, top={d}, bottom={d} }}",
+                        .{
+                            edge.left,
+                            edge.right,
+                            edge.top,
+                            edge.bottom,
+                        },
+                    );
+                },
+
+                .string_value => |string| {
+                    std.debug.print(
+                        "\"{s}\"",
+                        .{
+                            css_parser.content[string.start..(string.start + string.length)],
+                        },
+                    );
+                },
+
+                .color_value => |color| {
+                    std.debug.print(
+                        "#{X:0>2}{X:0>2}{X:0>2}",
+                        .{
+                            color.r,
+                            color.g,
+                            color.b,
+                        },
+                    );
+                },
+
+                .integer_value => |value| {
+                    std.debug.print("{d}", .{value});
+                },
+            }
+
+            std.debug.print(" ({s})\n", .{
+                @tagName(attribute.specificity),
+            });
+        }
+    }
+}
+
+pub const rgb_value = struct {
+    a: u8 = 0,
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
+};
+
+const Random = struct {
+    state: u32,
+
+    pub fn init(seed: u32) Random {
+        return .{
+            .state = seed,
+        };
+    }
+
+    pub fn next(self: *Random) u32 {
+        var x = self.state;
+
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+
+        self.state = x;
+        return x;
+    }
+
+    pub fn rgb(self: *Random) win.rgb_value {
+        return .{
+            .a = 0,
+            .r = @truncate(self.next()),
+            .g = @truncate(self.next()),
+            .b = @truncate(self.next()),
+        };
+    }
+};
+
+pub fn render_layout() void {
+    // clear bit map memory
+    win.render_box(0, 0, win.width_current, win.height_current, win.rgb_value{ .r = 255, .g = 255, .b = 255 });
+    for (&dom_nodes.nodes) |*node| {
+        if (node.tag == .text) continue;
+
+        var rgb: win.rgb_value = .{ .r = 0, .g = 0, .b = 0 };
+        if (node.attributes.return_attribute(.background_color) != null) {
+            const color_value = node.attributes.return_attribute(.background_color).?.value.color_value;
+            rgb.r = color_value.r;
+            rgb.g = color_value.g;
+            rgb.b = color_value.b;
+            win.render_box(node.dimensions.content.x, node.dimensions.content.y, node.dimensions.content.width, node.dimensions.content.height, rgb);
+        }
+        if (rgb.r > 0 or rgb.g > 0 or rgb.b > 0) {
+            std.debug.print("RGB Value: {d} {d} {d}\n", .{ rgb.r, rgb.g, rgb.b });
+        }
     }
 }
 
@@ -989,12 +1167,12 @@ pub fn main() anyerror!void {
     html_parser.parse();
     css_parser.parse();
 
-    calculate_layout();
+    //calculate_layout();
+    //render_layout();
 
+    win.Create();
     // Only do the debug print stuff if in debug mode
     if (builtin.mode == .Debug) {
         debug_print();
     }
-
-    win.Create();
 }
