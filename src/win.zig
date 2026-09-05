@@ -6,8 +6,8 @@ const main = @import("main.zig");
 const std = @import("std");
 const uni = std.unicode;
 
-const WIDTH_MIN = 1080;
-const HEIGHT_MIN = 720;
+const WIDTH_MIN = 540;
+const HEIGHT_MIN = 360;
 
 pub const RENDER_WIDTH_MAX = 1920;
 pub const RENDER_HEIGHT_MAX = 1080;
@@ -38,6 +38,134 @@ pub const rgb_value = struct {
     r: u8 = 0,
     g: u8 = 0,
     b: u8 = 0,
+};
+
+pub const Position = struct {
+    x: i32 = 0,
+    y: i32 = 0,
+};
+
+const FontProperties = struct {
+    font_position: Position = .{},
+    font_color: rgb_value = .{},
+    font_weight: i16 = 400,
+    font_size: i32 = 16,
+    // 400 is normal
+    font_italics: u1 = 0,
+    font_underline: u1 = 0,
+    font_strikethrough: u1 = 0,
+};
+
+pub fn test_draw() void {}
+
+const FontRenderer = struct {
+    font_properties: FontProperties = .{},
+    device_context: win.HDC,
+    text: [100]u8,
+    text_length: usize,
+
+    pub fn render_text(self: FontRenderer) void {
+        const hFont: win.HFONT = win.CreateFontW(
+            -(self.font_properties.font_size),
+            0,
+            0,
+            0,
+            self.font_properties.font_weight,
+            self.font_properties.font_italics,
+            self.font_properties.font_underline,
+            self.font_properties.font_strikethrough,
+            win.DEFAULT_CHARSET,
+            win.OUT_OUTLINE_PRECIS,
+            win.CLIP_DEFAULT_PRECIS,
+            win.CLEARTYPE_QUALITY,
+            win.VARIABLE_PITCH,
+            win.TEXT(std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI")),
+        );
+        const old_font = win.SelectObject(self.device_context, hFont);
+        defer _ = win.SelectObject(self.device_context, old_font);
+
+        defer _ = win.DeleteObject(hFont);
+        _ = win.SetBkMode(
+            self.device_context,
+            win.TRANSPARENT,
+        );
+
+        //Sets the coordinates for the rectangle in which the text is to be formatted.
+        _ = win.SetTextColor(self.device_context, win.RGB(
+            self.font_properties.font_color.r,
+            self.font_properties.font_color.g,
+            self.font_properties.font_color.b,
+        ));
+        // Convert UTF-8 → UTF-16
+        var utf16_buffer: [100]u16 = undefined;
+
+        const utf16_length = std.unicode.utf8ToUtf16Le(
+            &utf16_buffer,
+            self.text[0..self.text_length],
+        ) catch return;
+
+        _ = win.TextOutW(
+            self.device_context,
+            self.font_properties.font_position.x,
+            self.font_properties.font_position.y,
+            &utf16_buffer,
+            @intCast(utf16_length),
+        );
+    }
+
+    pub fn measure_text(self: FontRenderer) win.SIZE {
+        const hFont: win.HFONT = win.CreateFontW(
+            -(self.font_properties.font_size),
+            0,
+            0,
+            0,
+            self.font_properties.font_weight,
+            self.font_properties.font_italics,
+            self.font_properties.font_underline,
+            self.font_properties.font_strikethrough,
+            win.DEFAULT_CHARSET,
+            win.OUT_OUTLINE_PRECIS,
+            win.CLIP_DEFAULT_PRECIS,
+            win.ANTIALIASED_QUALITY,
+            win.VARIABLE_PITCH,
+            win.TEXT(std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI")),
+        );
+        const old_font = win.SelectObject(self.device_context, hFont);
+        defer _ = win.SelectObject(self.device_context, old_font);
+
+        defer _ = win.DeleteObject(hFont);
+
+        // Convert UTF-8 → UTF-16
+        var utf16_buffer: [100]u16 = undefined;
+
+        const utf16_length = std.unicode.utf8ToUtf16Le(
+            &utf16_buffer,
+            self.text[0..self.text_length],
+        ) catch {
+            return .{
+                .cx = 0,
+                .cy = 0,
+            };
+        };
+
+        var text_size: win.SIZE = undefined;
+
+        const success = win.GetTextExtentPoint32W(
+            self.device_context,
+            &utf16_buffer,
+            @intCast(utf16_length),
+            &text_size,
+        );
+
+        if (success == 0) {
+            return .{
+                .cx = 0,
+                .cy = 0,
+            };
+        }
+
+        return text_size;
+    }
 };
 
 pub fn render_box(x: i32, y: i32, width: i32, height: i32, rgb: rgb_value) void {
@@ -231,6 +359,8 @@ export fn Wndproc(window: win.HWND, message: win.UINT, wparam: win.WPARAM, lpara
     return result;
 }
 
+pub var font_renderer: FontRenderer = undefined;
+
 pub fn Create() void {
     const window_name = uni.utf8ToUtf16LeStringLiteral("Tiny Browser Renderer Test");
     const lpsz_class_name = uni.utf8ToUtf16LeStringLiteral("lpsz_class_name");
@@ -287,6 +417,11 @@ pub fn Create() void {
         window_class.hInstance,
         null, // lpParam
     );
+
+    const text_device_context: win.HDC = win.GetDC(window_handle);
+    font_renderer.device_context = text_device_context;
+    defer _ = win.ReleaseDC(window_handle, font_renderer.device_context);
+
     if (window_handle != null) {
         var frequency_processor: win.LARGE_INTEGER = undefined;
         var count_previous: win.LARGE_INTEGER = undefined;
@@ -320,6 +455,7 @@ pub fn Create() void {
 
             if (layout_dirty) {
                 render_box(0, 0, RENDER_WIDTH_MAX, RENDER_HEIGHT_MAX, rgb_value{ .r = 255, .g = 255, .b = 255 });
+
                 main.calculate_layout();
                 main.render_layout();
                 layout_dirty = false;
@@ -329,18 +465,7 @@ pub fn Create() void {
             //render_box(100, 100, 300, 500, rgb_value{ .r = 0, .g = 255, .b = 0 });
             //render_box(200, 200, 500, 50, rgb_value{ .r = 100, .g = 100, .b = 100 });
             //
-            // const hFont1: win.HFONT = win.CreateFontW(48, 0, 0, 0, win.FW_NORMAL, win.FALSE, win.TRUE, win.FALSE, win.DEFAULT_CHARSET, win.OUT_OUTLINE_PRECIS, win.CLIP_DEFAULT_PRECIS, win.CLEARTYPE_QUALITY, win.VARIABLE_PITCH, win.TEXT(std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI")));
-            // _ = win.SelectObject(device_context, hFont1);
-            // var rect: win.RECT = undefined;
-            //
-            // //Sets the coordinates for the rectangle in which the text is to be formatted.
-            // _ = win.SetRect(&rect, 100, 100, 700, 200);
-            // _ = win.SetTextColor(device_context, win.RGB(255, 0, 0));
-            // _ = win.DrawTextW(device_context, win.TEXT(uni.utf8ToUtf16LeStringLiteral("Drawing Text with Impact")), -1, &rect, win.DT_NOCLIP);
-            // _ = win.TextOutW(device_context, 100, 300, uni.utf8ToUtf16LeStringLiteral("Hellow").ptr, 6);
-            //
-            // _ = win.DeleteObject(hFont1);
-            //draw_text(window_handle);
+
             _ = win.ReleaseDC(window_handle, device_context);
             // var count_current: win.LARGE_INTEGER = undefined;
             // const cycle_count_current: u64 = helpers.rdtsc();

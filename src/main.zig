@@ -9,6 +9,9 @@ const ATTRIBUTES_MAXIMUM_NUMBER = 16;
 const TEXT_LENGTH_MAXIMUM_BYTES = 8192;
 const CSS_STYLE_RULES_MAXIMUM_NUMBER = 64;
 
+const DEFAULT_FONT_SIZE = 16;
+const DEFAULT_FONT_WEIGHT = 400;
+
 const Tag = enum(u8) {
     dead,
     html,
@@ -783,9 +786,42 @@ pub fn calculate_width(index: usize) void {
         dom_nodes.nodes[index].dimensions.content.x = parent.dimensions.content.x;
         dom_nodes.nodes[index].dimensions.content.y = parent.dimensions.content.y;
         dom_nodes.nodes[index].dimensions.content.width = parent.dimensions.content.width;
+
+        const font_size = if (dom_nodes.nodes[index].attributes.return_attribute(.font_size)) |attribute| attribute.value.integer_value else DEFAULT_FONT_SIZE;
+        const font_weight = if (dom_nodes.nodes[index].attributes.return_attribute(.font_weight)) |attribute| attribute.value.integer_value else DEFAULT_FONT_WEIGHT;
+        // const font_color = if (dom_nodes.nodes[index].attributes.return_attribute(.text_color)) |attribute| attribute.value.color_value else win.rgb_value{
+        //     .r = 0,
+        //     .g = 0,
+        //     .b = 0,
+        // };
+
+        win.font_renderer.font_properties.font_size = font_size;
+        win.font_renderer.font_properties.font_weight = @intCast(font_weight);
+        //        win.font_renderer.font_properties.font_color = font_color;
+        const start = dom_nodes.nodes[index].text.start;
+        const length = dom_nodes.nodes[index].text.length;
+        const end = start + length;
+        const text = std.mem.trimEnd(
+            u8,
+            html_parser.content[start..end],
+            "\r\n",
+        );
+
+        @memcpy(win.font_renderer.text[0..text.len], text);
+
+        win.font_renderer.text_length = text.len;
+        const width = win.font_renderer.measure_text().cx;
+        const height = win.font_renderer.measure_text().cy;
+        dom_nodes.nodes[index].dimensions.content.width = width;
+        dom_nodes.nodes[index].dimensions.content.height = height;
+
+        std.debug.print("Text: {s}, width: {d}, height: {d}\n", .{
+            text,
+            width,
+            height,
+        });
         return;
     }
-    // for certain tag, if there is no width specified, get the width of the text in it
 
     // total will be the min space required by the element
     var margin_left = if (dom_nodes.nodes[index].attributes.return_attribute(.margin)) |attribute| attribute.value.edge_value.left else 0;
@@ -856,8 +892,7 @@ pub fn calculate_height(index: u8) void {
     if (dom_nodes.nodes[index].tag == .text) {
         // const parent_id_returned = dom_nodes.return_parent_index(index);
         // const parent_node = dom_nodes.nodes[dom_nodes.return_parent_index(index)];
-        dom_nodes.nodes[dom_nodes.return_parent_index(index)].dimensions.content.height += 20;
-
+        return;
         // calculate the text height and add it to its parents
     } else if (dom_nodes.nodes[index].tag == .br) {
         dom_nodes.nodes[index].dimensions.content.height = 20;
@@ -912,8 +947,20 @@ pub fn calculate_height(index: u8) void {
         const border_width_bottom = if (dom_nodes.nodes[index].attributes.return_attribute(.border_width)) |attribute| attribute.value.edge_value.bottom else 0;
 
         const height = if (dom_nodes.nodes[index].attributes.return_attribute(.height)) |attribute| attribute.value.integer_value else dom_nodes.nodes[index].dimensions.content.height;
+        if (dom_nodes.nodes[index].tag == .h1) {
+            const underflow = height - 45;
+            if (underflow < 0) {
+                dom_nodes.nodes[index].dimensions.content.height += 45 - height;
+            }
+        } else if (dom_nodes.nodes[index].tag == .p or (dom_nodes.nodes[index].tag == .a)) {
+            const underflow = height - 21;
+            if (underflow < 0) {
+                dom_nodes.nodes[index].dimensions.content.height += 21 - height;
+            }
+        }
 
-        dom_nodes.nodes[index].dimensions.content.height += padding_top + padding_bottom + border_width_top + border_width_bottom + height;
+        dom_nodes.nodes[index].dimensions.content.height = height;
+        dom_nodes.nodes[index].dimensions.content.height += padding_top + padding_bottom + border_width_top + border_width_bottom;
         dom_nodes.nodes[index].dimensions.margin.top = margin_top;
         dom_nodes.nodes[index].dimensions.margin.bottom = margin_bottom;
         dom_nodes.nodes[index].dimensions.padding.top = padding_top;
@@ -921,7 +968,6 @@ pub fn calculate_height(index: u8) void {
         dom_nodes.nodes[index].dimensions.border.top = border_width_top;
         dom_nodes.nodes[index].dimensions.border.bottom = border_width_bottom;
 
-        dom_nodes.nodes[index].dimensions.content.height = height;
         //std.debug.print("\n Height of node at {d}: {d}", .{ index, dom_nodes.nodes[index].dimensions.content.height });
 
         // html parent index is also 0 so we have to except that
@@ -949,6 +995,24 @@ pub fn calculate_position_y(index: u8) void {
     dom_nodes.nodes[index].dimensions.content.y = parent_dimensions.content.y + parent_dimensions.padding.top + parent_dimensions.border.top + margin_top + previous_children_height;
 }
 
+pub fn calculate_width_inline_elements(index: u8) void {
+    if (dom_nodes.nodes[index].tag != .a or dom_nodes.nodes[index].tag != .span) {
+        return;
+    }
+
+    // get the sum of the width for all the children for this tag
+    var total: i32 = 0;
+
+    var x = index;
+    while (x < dom_nodes.nodes.len) : (x += 1) {
+        if (dom_nodes.nodes[x].id_parent == dom_nodes.nodes[index].id_node) {
+            total += dom_nodes.nodes[x].dimensions.content.width;
+        }
+    }
+
+    dom_nodes.nodes[index].dimensions.content.width = total;
+}
+
 pub fn calculate_layout() void {
     // calculate width of everything
     // full size - (the margins + border_width + parent padding)
@@ -963,6 +1027,7 @@ pub fn calculate_layout() void {
     var i: u8 = 0;
     while (i < dom_nodes.nodes_size) : (i += 1) {
         calculate_width(i);
+        calculate_width_inline_elements(i);
         calculate_position_x(i);
     }
     i = dom_nodes.nodes.len - 1;
@@ -981,6 +1046,23 @@ pub fn calculate_layout() void {
     // now you can calcualte the height in order
     while (i < dom_nodes.nodes_size) : (i += 1) {
         calculate_position_y(i);
+    }
+}
+
+pub fn update_text_nodes_with_attributes() void {
+    var i: u8 = 0;
+    for (&dom_nodes.nodes) |*node| {
+        if (node.tag == .h1) {
+            node.attributes.add_attribute(.{ .key = .font_weight, .value = .{ .integer_value = 700 }, .specificity = .tag });
+            node.attributes.add_attribute(.{ .key = .font_size, .value = .{ .integer_value = DEFAULT_FONT_SIZE * 2 }, .specificity = .tag });
+        }
+    }
+    while (i < dom_nodes.nodes.len) : (i += 1) {
+        if (dom_nodes.nodes[i].tag == .text) {
+            const parent = dom_nodes.nodes[dom_nodes.return_parent_index(i)];
+
+            dom_nodes.nodes[i].attributes = parent.attributes;
+        }
     }
 }
 
@@ -1166,8 +1248,9 @@ pub fn main() anyerror!void {
 
     html_parser.parse();
     css_parser.parse();
+    update_text_nodes_with_attributes();
 
-    //calculate_layout();
+    calculate_layout();
     //render_layout();
 
     win.Create();
